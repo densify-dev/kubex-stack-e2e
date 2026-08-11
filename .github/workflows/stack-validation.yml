@@ -83,7 +83,9 @@ jobs:
           kubectl --kubeconfig kwok.kubeconfig wait --for=condition=Ready node --all --timeout=10m
           control_plane_nodes=$(python3 -c 'import json, subprocess; data=json.loads(subprocess.check_output(["kubectl", "get", "nodes", "-o", "json"], text=True)); names=[item["metadata"]["name"] for item in data.get("items", []) if "node-role.kubernetes.io/control-plane" in item.get("metadata", {}).get("labels", {}) or "node-role.kubernetes.io/master" in item.get("metadata", {}).get("labels", {})]; print("\n".join(names))')
           printf '%s\n' "$control_plane_nodes" | xargs -r kubectl uncordon
-          printf '%s\n' "$control_plane_nodes" | xargs -r kubectl label node stack-validation-real=true --overwrite
+          for node in ${control_plane_nodes}; do
+            kubectl label node "${node}" stack-validation-real=true --overwrite
+          done
           printf '%s\n' "$control_plane_nodes" | xargs -r kubectl get node -o wide
 
       - name: Create namespaces and fake server config
