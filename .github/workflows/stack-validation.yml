@@ -108,37 +108,47 @@ jobs:
       - name: Render Kubex stack
         run: |
           helm repo add kubex https://densify-dev.github.io/helm-charts
-          helm repo update
-          helm template "${RELEASE_NAME}" kubex/kubex-automation-stack \
-            --version "${KUBEX_VERSION}" \
-            --namespace "${RELEASE_NAMESPACE}" \
-            --set stack.densify.createSecret=false \
-            --set gpu-process-exporter.enabled=false \
-            --set node-labeler.enabled=false \
-            --set beyla.enabled=false \
-            --set prometheus.server.resources.requests.memory=512Mi \
-            --set prometheus.server.resources.requests.cpu=200m \
-            --set prometheus.server.resources.limits.memory=1Gi \
-            --set prometheus.prometheus-node-exporter.resources.requests.memory=20Mi \
-            --set prometheus.prometheus-node-exporter.resources.requests.cpu=10m \
-            --set prometheus.prometheus-node-exporter.resources.limits.memory=40Mi \
-            --set container-optimization-data-forwarder.config.forwarder.densify.url.scheme=http \
-            --set container-optimization-data-forwarder.config.forwarder.densify.url.host="${STACK_HOST}" \
-            --set container-optimization-data-forwarder.config.forwarder.densify.url.port="${STACK_PORT}" \
-            --set container-optimization-data-forwarder.config.forwarder.densify.url.UserSecretName=null \
-            --set-string container-optimization-data-forwarder.config.forwarder.densify.url.username=stack-validation \
-            --set-string container-optimization-data-forwarder.config.forwarder.densify.url.password=stack-validation \
-            --set container-optimization-data-forwarder.config.forwarder.densify.endpoint="${STACK_ENDPOINT}" \
-            --set container-optimization-data-forwarder.config.collection.interval=minutes \
-            --set container-optimization-data-forwarder.config.collection.interval_size=1 \
-            --set container-optimization-data-forwarder.config.collection.history=30 \
-            --set container-optimization-data-forwarder.config.collection.sample_rate=1 \
-            --set container-optimization-data-forwarder.nodeSelector.stack-validation-real=true \
-            --set container-optimization-data-forwarder.config.clusters[0].name=stack-validation \
-            --set container-optimization-data-forwarder.job.enable=false \
-            --set container-optimization-data-forwarder.cronJob.schedule="0 0 1 1 *" \
-            | python3 scripts/inject_host_aliases.py --host "${STACK_HOST}" --ip "${STACK_SERVER_IP}" \
-            > "${STACK_VALIDATION_DIR}/kubex-stack-rendered.yaml"
+          helm_args=(
+            "${RELEASE_NAME}" kubex/kubex-automation-stack
+            --version "${KUBEX_VERSION}"
+            --namespace "${RELEASE_NAMESPACE}"
+            --set stack.densify.createSecret=false
+            --set gpu-process-exporter.enabled=false
+            --set node-labeler.enabled=false
+            --set beyla.enabled=false
+            --set prometheus.server.resources.requests.memory=512Mi
+            --set prometheus.server.resources.requests.cpu=200m
+            --set prometheus.server.resources.limits.memory=1Gi
+            --set prometheus.prometheus-node-exporter.resources.requests.memory=20Mi
+            --set prometheus.prometheus-node-exporter.resources.requests.cpu=10m
+            --set prometheus.prometheus-node-exporter.resources.limits.memory=40Mi
+            --set container-optimization-data-forwarder.config.forwarder.densify.url.scheme=http
+            --set container-optimization-data-forwarder.config.forwarder.densify.url.host="${STACK_HOST}"
+            --set container-optimization-data-forwarder.config.forwarder.densify.url.port="${STACK_PORT}"
+            --set container-optimization-data-forwarder.config.forwarder.densify.url.UserSecretName=null
+            --set-string container-optimization-data-forwarder.config.forwarder.densify.url.username=stack-validation
+            --set-string container-optimization-data-forwarder.config.forwarder.densify.url.password=stack-validation
+            --set container-optimization-data-forwarder.config.forwarder.densify.endpoint="${STACK_ENDPOINT}"
+            --set container-optimization-data-forwarder.config.collection.interval=minutes
+            --set container-optimization-data-forwarder.config.collection.interval_size=1
+            --set container-optimization-data-forwarder.config.collection.history=30
+            --set container-optimization-data-forwarder.config.collection.sample_rate=1
+            --set container-optimization-data-forwarder.nodeSelector.stack-validation-real=true
+            --set container-optimization-data-forwarder.config.clusters[0].name=stack-validation
+            --set container-optimization-data-forwarder.job.enable=false
+            --set container-optimization-data-forwarder.cronJob.schedule="0 0 1 1 *"
+          )
+          rendered="${STACK_VALIDATION_DIR}/kubex-stack-base.yaml"
+          for attempt in 1 2 3 4 5; do
+            if helm repo update && helm template "${helm_args[@]}" > "${rendered}"; then
+              break
+            fi
+            rm -f "${rendered}"
+            sleep "${attempt}"
+          done
+          test -s "${rendered}"
+          python3 scripts/inject_host_aliases.py --host "${STACK_HOST}" --ip "${STACK_SERVER_IP}" \
+            < "${rendered}" > "${STACK_VALIDATION_DIR}/kubex-stack-rendered.yaml"
 
       - name: Apply Kubex stack
         run: |
