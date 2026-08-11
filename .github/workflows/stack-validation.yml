@@ -83,6 +83,7 @@ jobs:
           kubectl --kubeconfig kwok.kubeconfig wait --for=condition=Ready node --all --timeout=10m
           control_plane_nodes=$(python3 -c 'import json, subprocess; data=json.loads(subprocess.check_output(["kubectl", "get", "nodes", "-o", "json"], text=True)); names=[item["metadata"]["name"] for item in data.get("items", []) if "node-role.kubernetes.io/control-plane" in item.get("metadata", {}).get("labels", {}) or "node-role.kubernetes.io/master" in item.get("metadata", {}).get("labels", {})]; print("\n".join(names))')
           printf '%s\n' "$control_plane_nodes" | xargs -r kubectl uncordon
+          printf '%s\n' "$control_plane_nodes" | xargs -r kubectl label node stack-validation-real=true --overwrite
           printf '%s\n' "$control_plane_nodes" | xargs -r kubectl get node -o wide
 
       - name: Create namespaces and fake server config
@@ -130,6 +131,7 @@ jobs:
             --set container-optimization-data-forwarder.config.collection.interval_size=1 \
             --set container-optimization-data-forwarder.config.collection.history=30 \
             --set container-optimization-data-forwarder.config.collection.sample_rate=1 \
+            --set container-optimization-data-forwarder.nodeSelector.stack-validation-real=true \
             --set container-optimization-data-forwarder.config.clusters[0].name=stack-validation \
             --set container-optimization-data-forwarder.job.enable=false \
             --set container-optimization-data-forwarder.cronJob.schedule="0 0 1 1 *" \
