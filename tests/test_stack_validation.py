@@ -92,6 +92,7 @@ class StackValidationHelpersTest(unittest.TestCase):
 
         transformed = inject(rendered, "fake.kubex.ai", "10.0.0.10")
         self.assertIn("hostAliases:", transformed)
+        self.assertIn("hostNetwork: true", transformed)
         self.assertIn("- ip: 10.0.0.10", transformed)
         self.assertIn("- fake.kubex.ai", transformed)
 
