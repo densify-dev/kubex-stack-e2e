@@ -29,6 +29,7 @@ def _transform_doc(lines: list[str], host: str, ip: str) -> list[str]:
                 out.extend(
                     [
                         f"{indent}hostNetwork: true",
+                        f"{indent}dnsPolicy: ClusterFirstWithHostNet",
                         f"{indent}hostAliases:",
                         f"{indent}  - ip: {ip}",
                         f"{indent}    hostnames:",
@@ -45,6 +46,7 @@ def _transform_doc(lines: list[str], host: str, ip: str) -> list[str]:
                 indent = match.group(1)
                 out[index:index] = [
                     f"{indent}hostNetwork: true",
+                    f"{indent}dnsPolicy: ClusterFirstWithHostNet",
                     f"{indent}hostAliases:",
                     f"{indent}  - ip: {ip}",
                     f"{indent}    hostnames:",
