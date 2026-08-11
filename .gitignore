@@ -1,3 +1,9 @@
+# Stack E2E run artifacts
+artifacts/
+metrics-usage.yaml
+kwok.kubeconfig
+*.log
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

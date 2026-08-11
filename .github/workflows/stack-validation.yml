@@ -1,0 +1,328 @@
+name: stack-validation
+
+on:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: stack-validation
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  validate-stack-upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      CLUSTER_NAME: stack-validation
+      RELEASE_NAME: kubex
+      RELEASE_NAMESPACE: kubex
+      KUBEX_VERSION: 1.0.18
+      KWOK_VERSION: v0.5.1
+      KWOK_NODES: "100"
+      STACK_SOAK_MINUTES: "30"
+      STACK_HOST: fake.kubex.ai
+      STACK_PORT: "8080"
+      STACK_ENDPOINT: /upload
+      STACK_SERVER_NAMESPACE: kubex
+      STACK_SERVER_NAME: stack-validation-webserver
+      STACK_SERVER_SCRIPT_CONFIGMAP: stack-validation-webserver-script
+      STACK_VALIDATION_DIR: artifacts/stack-validation
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Prepare artifact directories
+        run: |
+          mkdir -p "${STACK_VALIDATION_DIR}"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run unit tests
+        run: python3 -m unittest discover -s tests
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Install kwokctl
+        uses: kubernetes-sigs/kwok@main
+        with:
+          command: kwokctl
+          kwok-version: ${{ env.KWOK_VERSION }}
+
+      - name: Download KWOK metrics usage config
+        run: |
+          curl -fsSL -o metrics-usage.yaml \
+            https://github.com/kubernetes-sigs/kwok/releases/download/${KWOK_VERSION}/metrics-usage.yaml
+
+      - name: Create kind KWOK cluster
+        env:
+          KWOK_KUBE_VERSION: v1.30.0
+        run: |
+          kwokctl create cluster \
+            --runtime kind \
+            --name "${CLUSTER_NAME}" \
+            --enable-metrics-server \
+            -c metrics-usage.yaml
+          kwokctl get kubeconfig --name "${CLUSTER_NAME}" > kwok.kubeconfig
+          echo "KUBECONFIG=${PWD}/kwok.kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Uncordon real control-plane
+        run: |
+          kubectl --kubeconfig kwok.kubeconfig wait --for=condition=Ready node --all --timeout=10m
+          control_plane_nodes=$(python3 -c 'import json, subprocess; data=json.loads(subprocess.check_output(["kubectl", "get", "nodes", "-o", "json"], text=True)); names=[item["metadata"]["name"] for item in data.get("items", []) if "node-role.kubernetes.io/control-plane" in item.get("metadata", {}).get("labels", {}) or "node-role.kubernetes.io/master" in item.get("metadata", {}).get("labels", {})]; print("\n".join(names))')
+          printf '%s\n' "$control_plane_nodes" | xargs -r kubectl uncordon
+          printf '%s\n' "$control_plane_nodes" | xargs -r kubectl get node -o wide
+
+      - name: Create namespaces and fake server config
+        run: |
+          kubectl create namespace "${RELEASE_NAMESPACE}" --dry-run=client -o yaml | kubectl apply -f -
+          kubectl -n "${RELEASE_NAMESPACE}" create configmap "${STACK_SERVER_SCRIPT_CONFIGMAP}" \
+            --from-file=fake_stack_webserver.py=scripts/fake_stack_webserver.py \
+            --dry-run=client -o yaml | kubectl apply -f -
+          kubectl apply -f manifests/stack-validation-webserver.yaml
+
+      - name: Wait for fake server
+        run: |
+          kubectl rollout status deployment/${STACK_SERVER_NAME} -n "${RELEASE_NAMESPACE}" --timeout=5m
+
+      - name: Resolve fake server cluster IP
+        run: |
+          server_ip=$(kubectl -n "${RELEASE_NAMESPACE}" get svc "${STACK_SERVER_NAME}" -o jsonpath='{.spec.clusterIP}')
+          echo "STACK_SERVER_IP=${server_ip}" >> "$GITHUB_ENV"
+
+      - name: Render Kubex stack
+        run: |
+          helm repo add kubex https://densify-dev.github.io/helm-charts
+          helm repo update
+          helm template "${RELEASE_NAME}" kubex/kubex-automation-stack \
+            --version "${KUBEX_VERSION}" \
+            --namespace "${RELEASE_NAMESPACE}" \
+            --set stack.densify.createSecret=false \
+            --set gpu-process-exporter.enabled=false \
+            --set node-labeler.enabled=false \
+            --set beyla.enabled=false \
+            --set prometheus.server.resources.requests.memory=512Mi \
+            --set prometheus.server.resources.requests.cpu=200m \
+            --set prometheus.server.resources.limits.memory=1Gi \
+            --set prometheus.prometheus-node-exporter.resources.requests.memory=20Mi \
+            --set prometheus.prometheus-node-exporter.resources.requests.cpu=10m \
+            --set prometheus.prometheus-node-exporter.resources.limits.memory=40Mi \
+            --set container-optimization-data-forwarder.config.forwarder.densify.url.scheme=http \
+            --set container-optimization-data-forwarder.config.forwarder.densify.url.host="${STACK_HOST}" \
+            --set container-optimization-data-forwarder.config.forwarder.densify.url.port="${STACK_PORT}" \
+            --set container-optimization-data-forwarder.config.forwarder.densify.url.UserSecretName=null \
+            --set-string container-optimization-data-forwarder.config.forwarder.densify.url.username=stack-validation \
+            --set-string container-optimization-data-forwarder.config.forwarder.densify.url.password=stack-validation \
+            --set container-optimization-data-forwarder.config.forwarder.densify.endpoint="${STACK_ENDPOINT}" \
+            --set container-optimization-data-forwarder.config.collection.interval=minutes \
+            --set container-optimization-data-forwarder.config.collection.interval_size=1 \
+            --set container-optimization-data-forwarder.config.collection.history=30 \
+            --set container-optimization-data-forwarder.config.collection.sample_rate=1 \
+            --set container-optimization-data-forwarder.config.clusters[0].name=stack-validation \
+            --set container-optimization-data-forwarder.job.enable=false \
+            --set container-optimization-data-forwarder.cronJob.schedule="0 0 1 1 *" \
+            | python3 scripts/inject_host_aliases.py --host "${STACK_HOST}" --ip "${STACK_SERVER_IP}" \
+            > "${STACK_VALIDATION_DIR}/kubex-stack-rendered.yaml"
+
+      - name: Apply Kubex stack
+        run: |
+          kubectl apply -f "${STACK_VALIDATION_DIR}/kubex-stack-rendered.yaml"
+
+      - name: Wait for stack exporters
+        run: |
+          kubectl rollout status deployment/kubex-prometheus-server -n "${RELEASE_NAMESPACE}" --timeout=10m
+          kubectl rollout status deployment/kubex-kube-state-metrics -n "${RELEASE_NAMESPACE}" --timeout=10m
+          kubectl rollout status daemonset/kubex-prometheus-node-exporter -n "${RELEASE_NAMESPACE}" --timeout=10m
+          kubectl rollout status deployment/k8s-ephemeral-storage-metrics -n "${RELEASE_NAMESPACE}" --timeout=10m
+
+      - name: Wait for required Prometheus metrics
+        run: |
+          kubectl port-forward -n "${RELEASE_NAMESPACE}" svc/kubex-prometheus-server 19090:80 >/tmp/stack-prometheus-port-forward.log 2>&1 &
+          pf_pid=$!
+          trap 'kill ${pf_pid} >/dev/null 2>&1 || true' EXIT
+          python3 - <<'PY'
+          import json
+          import time
+          import urllib.parse
+          import urllib.request
+          from pathlib import Path
+
+          metrics = [
+              "kubernetes_build_info",
+              "kube_node_info",
+              "kube_node_status_capacity",
+              "node_cpu_seconds_total",
+              "kube_pod_info",
+              "kube_pod_container_resource_requests",
+              "container_cpu_usage_seconds_total",
+              "ephemeral_storage_node_available",
+          ]
+          base_url = "http://127.0.0.1:19090"
+          output = Path("artifacts/stack-validation")
+          deadline = time.monotonic() + 600
+          while time.monotonic() < deadline:
+              missing = []
+              for metric in metrics:
+                  try:
+                      query = urllib.parse.urlencode({"query": metric})
+                      with urllib.request.urlopen(f"{base_url}/api/v1/query?{query}", timeout=10) as response:
+                          result = json.load(response).get("data", {}).get("result", [])
+                  except Exception:
+                      result = []
+                  if not result:
+                      missing.append(metric)
+              try:
+                  with urllib.request.urlopen(f"{base_url}/api/v1/targets", timeout=10) as response:
+                      targets = json.load(response)
+                  output.joinpath("prometheus-targets.json").write_text(
+                      json.dumps(targets, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+                  )
+              except Exception:
+                  pass
+              if not missing:
+                  print("required Prometheus metrics are available")
+                  # The collector rounds interval boundaries down. Ensure the
+                  # completed one-minute window contains exporter samples.
+                  time.sleep(70)
+                  raise SystemExit(0)
+              print(f"waiting for Prometheus metrics: {', '.join(missing)}", flush=True)
+              time.sleep(10)
+          raise SystemExit("timed out waiting for required Prometheus metrics")
+          PY
+
+      - name: Create real-node probe workload
+        run: |
+          kubectl apply -f manifests/stack-validation-workload.yaml
+          kubectl wait --for=condition=Available deployment/resource-fixture -n stack-validation-workload --timeout=5m
+
+      - name: Scale KWOK nodes
+        run: |
+          kwokctl scale node --name "${CLUSTER_NAME}" --replicas "${KWOK_NODES}"
+          kubectl wait --for=condition=Ready node --all --timeout=10m
+          kwok_nodes=$(kubectl get nodes -l type=kwok --no-headers | wc -l)
+          if [ "${kwok_nodes}" -lt "${KWOK_NODES}" ]; then
+            echo "expected at least ${KWOK_NODES} KWOK nodes, found ${kwok_nodes}" >&2
+            kubectl get nodes --show-labels
+            exit 1
+          fi
+          kubectl get nodes -o wide
+
+      - name: Apply mixed stack workloads
+        run: |
+          python3 scripts/build_stack_validation_workloads.py \
+            --output "${STACK_VALIDATION_DIR}/mixed-workloads.yaml"
+          kubectl apply -f "${STACK_VALIDATION_DIR}/mixed-workloads.yaml"
+
+      - name: Wait for mixed workload ramp
+        run: |
+          for _ in $(seq 1 180); do
+            objects=$(kubectl get deployment.apps,statefulset.apps,cronjob.batch,daemonset.apps -n stack-validation-workload -l app.kubernetes.io/name=stack-validation-mixed --no-headers 2>/dev/null | wc -l)
+            pods=$(kubectl get pods -n stack-validation-workload -l app.kubernetes.io/name=stack-validation-mixed --no-headers 2>/dev/null | wc -l)
+            echo "workload objects=${objects}/61 pods=${pods}/150"
+            if [ "${objects}" -ge 61 ] && [ "${pods}" -ge 150 ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          kubectl get deployment,statefulset,cronjob,daemonset,pod -n stack-validation-workload -o wide
+          exit 1
+
+      - name: Soak after node ramp
+        run: |
+          python3 - "${STACK_SOAK_MINUTES}" <<'PY'
+          import sys
+          import time
+          from datetime import datetime, timezone
+
+          for minute in range(int(sys.argv[1])):
+              stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+              print(f'[{stamp}] stack validation soak {minute + 1}/{sys.argv[1]}', flush=True)
+              time.sleep(60)
+          PY
+
+      - name: Create data forwarder job
+        run: |
+          kubectl create job "${RELEASE_NAME}-kubex-stack-validation" \
+            --from=cronjob/"${RELEASE_NAME}-kubex-stack" \
+            -n "${RELEASE_NAMESPACE}"
+
+      - name: Wait for data forwarder job
+        run: |
+          job_name="${RELEASE_NAME}-kubex-stack-validation"
+          for _ in $(seq 1 180); do
+            status=$(kubectl get job "${job_name}" -n "${RELEASE_NAMESPACE}" -o json)
+            complete=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", {}).get("succeeded", 0))' <<<"${status}")
+            failed=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get("status", {}).get("failed", 0))' <<<"${status}")
+            if [ "${complete}" -gt 0 ]; then
+              exit 0
+            fi
+            if [ "${failed}" -ge 5 ]; then
+              kubectl logs -n "${RELEASE_NAMESPACE}" job/"${job_name}" -c kubex-stack || true
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "timed out waiting for ${job_name}" >&2
+          exit 1
+
+      - name: Capture server state
+        if: always()
+        run: |
+          kubectl port-forward -n "${RELEASE_NAMESPACE}" svc/"${STACK_SERVER_NAME}" 18080:8080 >/tmp/stack-validation-port-forward.log 2>&1 &
+          pf_pid=$!
+          trap 'kill ${pf_pid} >/dev/null 2>&1 || true' EXIT
+          python3 scripts/validate_stack_upload.py \
+            --state http://127.0.0.1:18080/debug/state \
+            --output-state "${STACK_VALIDATION_DIR}/server-state.json" \
+            --output-dir "${STACK_VALIDATION_DIR}/captured-csv" \
+            --require-data \
+            --required-files \
+              cluster/config.csv cluster/attributes.csv \
+              node/config.csv node/attributes.csv \
+              container/config.csv container/attributes.csv
+
+      - name: Collect diagnostics on failure
+        if: failure()
+        run: |
+          mkdir -p "${STACK_VALIDATION_DIR}/diagnostics"
+          kubectl get pod -n "${RELEASE_NAMESPACE}" -o wide > "${STACK_VALIDATION_DIR}/diagnostics/pods.txt" || true
+          kubectl describe job "${RELEASE_NAME}-kubex-stack-validation" -n "${RELEASE_NAMESPACE}" > "${STACK_VALIDATION_DIR}/diagnostics/job.txt" || true
+          kubectl logs -n "${RELEASE_NAMESPACE}" job/"${RELEASE_NAME}-kubex-stack-validation" -c kubex-stack > "${STACK_VALIDATION_DIR}/diagnostics/job.log" || true
+          kubectl logs -n "${RELEASE_NAMESPACE}" deployment/"${STACK_SERVER_NAME}" > "${STACK_VALIDATION_DIR}/diagnostics/webserver.log" || true
+          kubectl logs -n "${RELEASE_NAMESPACE}" deployment/kubex-prometheus-server --all-containers=true > "${STACK_VALIDATION_DIR}/diagnostics/prometheus.log" || true
+          kubectl get endpointslice -n "${RELEASE_NAMESPACE}" -o yaml > "${STACK_VALIDATION_DIR}/diagnostics/endpointslices.yaml" || true
+          kubectl describe pod -n "${RELEASE_NAMESPACE}" -l "job-name=${RELEASE_NAME}-kubex-stack-validation" > "${STACK_VALIDATION_DIR}/diagnostics/job-pod.txt" || true
+          kubectl get events -A --sort-by=.lastTimestamp > "${STACK_VALIDATION_DIR}/diagnostics/events.txt" || true
+
+      - name: Summarize results
+        if: always()
+        env:
+          JOB_STATUS: ${{ job.status }}
+        run: |
+          python3 scripts/summarize_stack_validation.py \
+            --state "${STACK_VALIDATION_DIR}/server-state.json" \
+            --csv-dir "${STACK_VALIDATION_DIR}/captured-csv" \
+            --status "${JOB_STATUS}" \
+            --output "${STACK_VALIDATION_DIR}/summary.md"
+          cat "${STACK_VALIDATION_DIR}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-validation-${{ github.run_id }}
+          path: artifacts/stack-validation
+          if-no-files-found: warn
+          retention-days: 14

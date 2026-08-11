@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stack-validation-webserver
+  namespace: kubex
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: stack-validation-webserver
+  template:
+    metadata:
+      labels:
+        app: stack-validation-webserver
+    spec:
+      containers:
+        - name: webserver
+          image: python:3.11-slim
+          imagePullPolicy: IfNotPresent
+          command:
+            - python
+            - /scripts/fake_stack_webserver.py
+          env:
+            - name: STACK_WEB_PORT
+              value: "8080"
+          ports:
+            - containerPort: 8080
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: stack-validation-webserver-script
+            defaultMode: 0755
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stack-validation-webserver
+  namespace: kubex
+spec:
+  selector:
+    app: stack-validation-webserver
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
