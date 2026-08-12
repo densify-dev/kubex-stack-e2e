@@ -132,7 +132,7 @@ jobs:
             --set container-optimization-data-forwarder.config.forwarder.densify.endpoint="${STACK_ENDPOINT}"
             --set container-optimization-data-forwarder.config.collection.interval=minutes
             --set container-optimization-data-forwarder.config.collection.interval_size=1
-            --set container-optimization-data-forwarder.config.collection.history=30
+            --set container-optimization-data-forwarder.config.collection.history=1
             --set container-optimization-data-forwarder.config.collection.sample_rate=1
             --set-string container-optimization-data-forwarder.nodeSelector.stack-validation-real=true
             --set container-optimization-data-forwarder.config.clusters[0].name=stack-validation
