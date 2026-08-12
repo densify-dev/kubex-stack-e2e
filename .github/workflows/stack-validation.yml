@@ -116,9 +116,10 @@ jobs:
             --set gpu-process-exporter.enabled=false
             --set node-labeler.enabled=false
             --set beyla.enabled=false
-            --set prometheus.server.resources.requests.memory=512Mi
-            --set prometheus.server.resources.requests.cpu=200m
-            --set prometheus.server.resources.limits.memory=1Gi
+            --set prometheus.server.resources.requests.memory=1Gi
+            --set prometheus.server.resources.requests.cpu=500m
+            --set prometheus.server.resources.limits.memory=2Gi
+            --set prometheus.server.resources.limits.cpu=1
             --set prometheus.prometheus-node-exporter.resources.requests.memory=20Mi
             --set prometheus.prometheus-node-exporter.resources.requests.cpu=10m
             --set prometheus.prometheus-node-exporter.resources.limits.memory=40Mi
