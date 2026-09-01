@@ -15,6 +15,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Sequence
 
+from harness.versions import COLLECTOR_IMAGE, KIND_NODE_IMAGE, STACK_CHART_VERSION
+
 CLUSTER_NAME_PREFIX = "kubex-e2e-"
 INTERVAL_SECONDS = {"seconds": 1, "minutes": 60, "hours": 3600}
 
@@ -71,7 +73,7 @@ class Node:
 
 @dataclass(frozen=True)
 class ClusterSpec:
-    node_image: str
+    node_image: str = KIND_NODE_IMAGE
     control_planes: Sequence[Node] = (Node(),)
     workers: Sequence[Node] = ()
     kubelet: Mapping[str, str] = field(default_factory=dict)
@@ -122,16 +124,11 @@ class Collection:
 class StackSpec:
     chart: str = "kubex/kubex-automation-stack"
     repository: str = "https://densify-dev.github.io/helm-charts"
-    version: str | None = None
+    version: str | None = STACK_CHART_VERSION
     release_name: str = "kubex"
     namespace: str = "kubex"
-    collector_digest: str | None = None
-    collector_version: str | None = None
+    collector_image: str | None = COLLECTOR_IMAGE
     helm_overrides: Mapping[str, Any] = field(default_factory=dict)
-
-    def __post_init__(self) -> None:
-        if self.collector_digest and self.collector_version:
-            raise SpecError("StackSpec: set collector_digest or collector_version, not both")
 
 
 @dataclass(frozen=True)

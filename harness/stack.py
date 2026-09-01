@@ -74,17 +74,8 @@ def template_args(
         "container-optimization-data-forwarder.job.enable": False,
         "container-optimization-data-forwarder.cronJob.schedule": "0 0 1 1 *",
     }
-    if stack.collector_digest:
-        digest = (
-            stack.collector_digest
-            if stack.collector_digest.startswith("sha256:")
-            else f"sha256:{stack.collector_digest}"
-        )
-        defaults["container-optimization-data-forwarder.image"] = (
-            f"densify/container-optimization-data-forwarder@{digest}"
-        )
-    elif stack.collector_version:
-        defaults["container-optimization-data-forwarder.images.dataCollection.tag"] = stack.collector_version
+    if stack.collector_image:
+        defaults["container-optimization-data-forwarder.image"] = stack.collector_image
 
     overrides = dict(stack.helm_overrides)
     supplied = {key for key, _ in flatten_values(overrides)}

@@ -25,6 +25,8 @@ from decimal import Decimal
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import yaml
+
 from harness import artifacts as artifacts_mod
 from harness import run as run_mod
 from harness.archive import (
@@ -35,6 +37,7 @@ from harness.archive import (
     read_archive_files,
 )
 from harness.command import HarnessError, run
+from harness.fixtures import _deployment
 from harness.metric_fixture_server import (
     FixtureError,
     FixtureServer,
@@ -56,6 +59,7 @@ from harness.spec import (
     StackSpec,
 )
 from harness.stack import resource_paths, template_args
+from harness.versions import COLLECTOR_IMAGE, FIXTURE_IMAGE, KIND_NODE_IMAGE, STACK_CHART_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -105,6 +109,15 @@ class FixtureServerTest(unittest.TestCase):
     def test_normalized_fixture_is_valid_input(self) -> None:
         metrics = validate_fixture_document({"metrics": [{"name": "gauge", "type": "gauge", "value": 1}]})
         self.assertEqual(validate_fixture_document({"metrics": metrics}), metrics)
+
+    def test_deployment_uses_the_pinned_fixture_image(self) -> None:
+        service = FixtureService(
+            name="metrics",
+            metrics=[Metric(name="fixture_value", type="gauge")],
+        )
+        deployment = yaml.safe_load(_deployment(service, "fixtures"))
+        container = deployment["spec"]["template"]["spec"]["containers"][0]
+        self.assertEqual(container["image"], FIXTURE_IMAGE)
 
     def test_typed_metric_normalizes_into_valid_fixture_input(self) -> None:
         """The harness generates the fixture, so its output must satisfy the server."""
@@ -282,6 +295,54 @@ class CommandAndReceiverTest(unittest.TestCase):
 
 
 class HelmValuesTest(unittest.TestCase):
+    def test_pinned_defaults_reach_cluster_and_helm(self) -> None:
+        self.assertEqual(ClusterSpec(workers=[Node()]).node_image, KIND_NODE_IMAGE)
+
+        stack = StackSpec()
+        self.assertEqual(stack.version, STACK_CHART_VERSION)
+        _, _, args = template_args("demo", stack, ForwarderSpec())
+        self.assertIn(STACK_CHART_VERSION, args)
+        self.assertIn(
+            f"container-optimization-data-forwarder.image={COLLECTOR_IMAGE}",
+            args,
+        )
+
+    def test_collector_image_can_be_overridden_or_left_to_the_chart(self) -> None:
+        custom_image = "example.test/collector:scenario"
+        _, _, custom_args = template_args(
+            "demo", StackSpec(collector_image=custom_image), ForwarderSpec()
+        )
+        self.assertIn(
+            f"container-optimization-data-forwarder.image={custom_image}",
+            custom_args,
+        )
+        self.assertNotIn(
+            f"container-optimization-data-forwarder.image={COLLECTOR_IMAGE}",
+            custom_args,
+        )
+
+        _, _, chart_args = template_args(
+            "demo", StackSpec(collector_image=None), ForwarderSpec()
+        )
+        self.assertFalse(
+            any(
+                arg.startswith("container-optimization-data-forwarder.image")
+                for arg in chart_args
+            )
+        )
+
+    def test_chart_version_override_ignores_an_empty_value(self) -> None:
+        _, _, default_args = template_args(
+            "demo", StackSpec(), ForwarderSpec(), chart_version=""
+        )
+        self.assertIn(STACK_CHART_VERSION, default_args)
+
+        _, _, override_args = template_args(
+            "demo", StackSpec(), ForwarderSpec(), chart_version="2.0.0"
+        )
+        self.assertIn("2.0.0", override_args)
+        self.assertNotIn(STACK_CHART_VERSION, override_args)
+
     def test_overrides_escape_literal_segments_and_encode_lists_as_json(self) -> None:
         stack = StackSpec(
             version="1.0.0",

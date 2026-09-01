@@ -46,10 +46,6 @@ _CONTROL_PLANE_TOLERATION = [
 SCENARIO = ScenarioSpec(
     name="nodegroup-labels",
     cluster=ClusterSpec(
-        node_image=(
-            "kindest/node:v1.30.0@sha256:"
-            "047357ac0cfea04663786a612ba1eaba9702bef25227a794b52890dd8bcd692e"
-        ),
         control_planes=[Node(labels=_SYSTEM_NODE)],
         workers=[
             Node(labels={**NODE_GROUP, "ignored.kubex.ai/group": "ignored-value"}),
@@ -57,8 +53,6 @@ SCENARIO = ScenarioSpec(
         ],
     ),
     stack=StackSpec(
-        version="1.0.20",
-        collector_digest="sha256:21dfa25b10046edf735eac0a03232ad68068c6da39c9af4c898f9c6a112fdaa0",
         helm_overrides={
             "stack": {"densify": {"createSecret": False}, "prometheus": {"deploy": True}},
             "gpu-process-exporter": {"enabled": False},

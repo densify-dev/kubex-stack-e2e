@@ -13,10 +13,8 @@ import yaml
 
 from harness.command import apply_yaml, create_configmap, ensure_namespace, kubectl, write_json
 from harness.spec import FixtureService, ScenarioSpec
+from harness.versions import FIXTURE_IMAGE
 
-# Multi-architecture index digest for python:3.11-slim, pinned so fixture pods
-# are reproducible across runs and runner architectures.
-FIXTURE_IMAGE = "python@sha256:1042b61448fef4ba92d16a8c7eb4996d027568ce64792a7877fd88511e0af7c6"
 SERVER_CONFIGMAP = "stack-e2e-metric-fixture-server"
 
 

@@ -22,10 +22,10 @@ on:
           - pr
           - release
       stack_chart_version:
-        description: Kubex Automation Stack chart version
-        required: true
+        description: Chart version override (blank uses the harness default)
+        required: false
         type: string
-        default: 1.0.20
+        default: ""
 
 concurrency:
   group: kind-functional-${{ github.ref }}
@@ -39,13 +39,13 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      KIND_VERSION: v0.23.0
-      KIND_SHA256: 1d86e3069ffbe3da9f1a918618aecbc778e00c75f838882d0dfa2d363bc4a68c
-      # Matches the Kubernetes version of the node image pinned by the scenarios.
-      KUBECTL_VERSION: v1.30.0
-      KUBECTL_SHA256: 7c3807c0f5c1b30110a2ff1e55da1d112a6d0096201f1beb81b269f582b5d1c5
+      KIND_VERSION: v0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+      # Matches the Kubernetes version of the default node image.
+      KUBECTL_VERSION: v1.37.0
+      KUBECTL_SHA256: 6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
       SCENARIO: ${{ inputs.scenario || 'nodegroup-labels' }}
-      STACK_CHART_VERSION: ${{ inputs.stack_chart_version || '1.0.20' }}
+      STACK_CHART_VERSION_OVERRIDE: ${{ inputs.stack_chart_version }}
       # `-m release` alone would skip tests marked only `pr`, so the full tier is
       # always the disjunction.
       TIER: ${{ inputs.tier == 'release' && 'pr or release' || 'pr' }}
@@ -56,7 +56,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
           cache: pip
 
       - name: Install Python dependencies
@@ -68,7 +68,7 @@ jobs:
       - name: Set up Helm
         uses: azure/setup-helm@v4
         with:
-          version: v3.16.3
+          version: v4.2.4
 
       - name: Install Kind
         run: |
@@ -92,7 +92,7 @@ jobs:
           python3 -m pytest "scenarios/${SCENARIO}" -v \
             -m "${TIER}" \
             --junitxml="artifacts/kind-functional/${SCENARIO}-pytest.xml" \
-            --stack-chart-version "${STACK_CHART_VERSION}"
+            --stack-chart-version "${STACK_CHART_VERSION_OVERRIDE}"
 
       - name: Publish scenario summary
         if: always()
