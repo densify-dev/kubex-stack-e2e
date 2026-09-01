@@ -1,0 +1,117 @@
+name: kind-functional
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Functional scenario to run
+        required: true
+        type: choice
+        default: nodegroup-labels
+        options:
+          - nodegroup-labels
+      tier:
+        description: Test tier
+        required: true
+        type: choice
+        default: pr
+        options:
+          - pr
+          - release
+      stack_chart_version:
+        description: Kubex Automation Stack chart version
+        required: true
+        type: string
+        default: 1.0.20
+
+concurrency:
+  group: kind-functional-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  run-scenario:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      KIND_VERSION: v0.23.0
+      KIND_SHA256: 1d86e3069ffbe3da9f1a918618aecbc778e00c75f838882d0dfa2d363bc4a68c
+      # Matches the Kubernetes version of the node image pinned by the scenarios.
+      KUBECTL_VERSION: v1.30.0
+      KUBECTL_SHA256: 7c3807c0f5c1b30110a2ff1e55da1d112a6d0096201f1beb81b269f582b5d1c5
+      SCENARIO: ${{ inputs.scenario }}
+      STACK_CHART_VERSION: ${{ inputs.stack_chart_version }}
+      # `-m release` alone would skip tests marked only `pr`, so the full tier is
+      # always the disjunction.
+      TIER: ${{ inputs.tier == 'release' && 'pr or release' || 'pr' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: python3 -m pytest tests -q
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.3
+
+      - name: Install Kind
+        run: |
+          curl -fsSLo kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          printf '%s  %s\n' "${KIND_SHA256}" kind | sha256sum --check
+          sudo install kind /usr/local/bin/kind
+
+      - name: Install kubectl
+        run: |
+          curl -fsSLo kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          printf '%s  %s\n' "${KUBECTL_SHA256}" kubectl | sha256sum --check
+          sudo install kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      - name: Run functional scenario
+        id: functional-scenario
+        # One scenario directory per job: each needs its own Kind cluster, so the
+        # explicit matrix stays. Markers select the tier inside a job.
+        run: |
+          mkdir -p artifacts/kind-functional
+          python3 -m pytest "scenarios/${SCENARIO}" -v \
+            -m "${TIER}" \
+            --junitxml="artifacts/kind-functional/${SCENARIO}-pytest.xml" \
+            --stack-chart-version "${STACK_CHART_VERSION}"
+
+      - name: Publish scenario summary
+        if: always()
+        run: |
+          summary="artifacts/kind-functional/${SCENARIO}/summary.md"
+          report="artifacts/kind-functional/${SCENARIO}-pytest.xml"
+          mkdir -p "$(dirname "${summary}")"
+          if [[ -f "${report}" ]]; then
+            mv "${report}" "$(dirname "${summary}")/pytest.xml"
+          fi
+          if [[ -f "${summary}" ]]; then
+            printf '\n**Pytest status:** %s\n' "${{ steps.functional-scenario.outcome }}" >> "${summary}"
+            cat "${summary}" >> "${GITHUB_STEP_SUMMARY}"
+          else
+            printf '# Scenario %s\n\n**Status:** failed before summary generation\n' "${SCENARIO}" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload scenario artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kind-functional-${{ inputs.scenario }}-${{ github.run_id }}
+          path: artifacts/kind-functional/${{ inputs.scenario }}
+          if-no-files-found: warn
+          retention-days: 14
