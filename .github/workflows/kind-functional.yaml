@@ -1,6 +1,9 @@
 name: kind-functional
 
 on:
+  push:
+    branches:
+      - anant/stack-e2e-harness
   workflow_dispatch:
     inputs:
       scenario:
@@ -41,8 +44,8 @@ jobs:
       # Matches the Kubernetes version of the node image pinned by the scenarios.
       KUBECTL_VERSION: v1.30.0
       KUBECTL_SHA256: 7c3807c0f5c1b30110a2ff1e55da1d112a6d0096201f1beb81b269f582b5d1c5
-      SCENARIO: ${{ inputs.scenario }}
-      STACK_CHART_VERSION: ${{ inputs.stack_chart_version }}
+      SCENARIO: ${{ inputs.scenario || 'nodegroup-labels' }}
+      STACK_CHART_VERSION: ${{ inputs.stack_chart_version || '1.0.20' }}
       # `-m release` alone would skip tests marked only `pr`, so the full tier is
       # always the disjunction.
       TIER: ${{ inputs.tier == 'release' && 'pr or release' || 'pr' }}
