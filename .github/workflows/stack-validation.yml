@@ -204,7 +204,6 @@ jobs:
         run: |
           kubectl -n stack-validation-runtime create job beyla-runtime-traffic \
             --image=curlimages/curl:8.12.1 \
-            --restart=Never \
             -- sh -c 'for i in $(seq 1 60); do for runtime in go java nodejs python dotnet; do curl --fail --silent --show-error --max-time 5 http://beyla-runtime-${runtime}:8080/; done; sleep 2; done'
           kubectl wait --for=condition=complete job/beyla-runtime-traffic \
             -n stack-validation-runtime --timeout=10m
