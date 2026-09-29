@@ -40,6 +40,13 @@ def build() -> str:
     docs = [f"apiVersion: v1\nkind: Namespace\nmetadata:\n  name: {NAMESPACE}\n"]
     filenames = {"go": "server.go", "java": "Server.java", "nodejs": "server.js", "python": "server.py", "dotnet": "Server.csproj"}
     for runtime, (image, _, source, command) in RUNTIMES.items():
+        commands = {
+            "go": "cp /source/server.go /app/ && go run /app/server.go",
+            "java": "cp /source/Server.java /app/ && javac /app/Server.java && java -cp /app Server",
+            "nodejs": "cp /source/server.js /app/ && node /app/server.js",
+            "python": "cp /source/server.py /app/ && python /app/server.py",
+            "dotnet": "cp /source/Server.csproj /source/Program.cs /app/ && dotnet run --project /app/Server.csproj --urls http://0.0.0.0:8080",
+        }
         config_name = f"beyla-runtime-{runtime}-source"
         config_data = [f"  {filenames[runtime]}: |", *[f"    {line}" for line in source.rstrip().splitlines()]]
         if runtime == "dotnet":
@@ -53,7 +60,7 @@ def build() -> str:
         docs.append("\n".join(["apiVersion: v1", "kind: ConfigMap", "metadata:", f"  name: {config_name}", f"  namespace: {NAMESPACE}", "data:", *config_data]) + "\n")
         labels = ["app.kubernetes.io/name: beyla-runtime-fixture", f"kubex.ai/runtime: {runtime}", "kubex.ai/beyla-test: \"true\""]
         docs.append("\n".join([
-            "apiVersion: apps/v1", "kind: Deployment", "metadata:", f"  name: beyla-runtime-{runtime}", f"  namespace: {NAMESPACE}", "  labels:", *[f"    {x}" for x in labels], "spec:", "  replicas: 1", "  selector:", "    matchLabels:", f"      kubex.ai/runtime: {runtime}", "  template:", "    metadata:", "      labels:", *[f"        {x}" for x in labels], "    spec:", "      nodeSelector:", f"        {NODE_LABEL}: \"true\"", "      containers:", "      - name: app", f"        image: {image}", "        imagePullPolicy: IfNotPresent", f"        command: {json_array(command)}", "        ports:", "        - name: http", "          containerPort: 8080", "          protocol: TCP", "        volumeMounts:", "        - name: source", "          mountPath: /app", "      volumes:", "      - name: source", "        configMap:", f"          name: {config_name}",
+            "apiVersion: apps/v1", "kind: Deployment", "metadata:", f"  name: beyla-runtime-{runtime}", f"  namespace: {NAMESPACE}", "  labels:", *[f"    {x}" for x in labels], "spec:", "  replicas: 1", "  selector:", "    matchLabels:", f"      kubex.ai/runtime: {runtime}", "  template:", "    metadata:", "      labels:", *[f"        {x}" for x in labels], "    spec:", "      nodeSelector:", f"        {NODE_LABEL}: \"true\"", "      containers:", "      - name: app", f"        image: {image}", "        imagePullPolicy: IfNotPresent", f"        command: {json_array(["sh", "-c", commands[runtime]])}", "        ports:", "        - name: http", "          containerPort: 8080", "          protocol: TCP", "        volumeMounts:", "        - name: source", "          mountPath: /source", "          readOnly: true", "        - name: work", "          mountPath: /app", "      volumes:", "      - name: source", "        configMap:", f"          name: {config_name}", "      - name: work", "        emptyDir: {}",
         ]) + "\n")
         docs.append("\n".join(["apiVersion: v1", "kind: Service", "metadata:", f"  name: beyla-runtime-{runtime}", f"  namespace: {NAMESPACE}", "  labels:", *[f"    {x}" for x in labels], "spec:", "  selector:", f"    kubex.ai/runtime: {runtime}", "  ports:", "  - name: http", "    port: 8080", "    targetPort: http"]) + "\n")
     return "---\n".join(docs) + "\n"
