@@ -23,7 +23,6 @@ jobs:
       CLUSTER_NAME: stack-validation
       RELEASE_NAME: kubex
       RELEASE_NAMESPACE: kubex
-      KUBEX_VERSION: 1.0.18
       KWOK_VERSION: v0.5.1
       KWOK_NODES: "100"
       STACK_SOAK_MINUTES: "30"
@@ -108,6 +107,22 @@ jobs:
       - name: Render Kubex stack
         run: |
           helm repo add kubex https://densify-dev.github.io/helm-charts
+          helm repo update
+          helm search repo kubex/kubex-automation-stack --versions -o json > "${STACK_VALIDATION_DIR}/chart-search.json"
+          CHART_VERSION=$(python3 scripts/resolve_stack_chart.py \
+            --search "${STACK_VALIDATION_DIR}/chart-search.json" \
+            --output "${STACK_VALIDATION_DIR}/chart-metadata.json")
+          echo "KUBEX_VERSION=${CHART_VERSION}" >> "$GITHUB_ENV"
+          echo "Using kubex-automation-stack chart ${CHART_VERSION}" >> "$GITHUB_STEP_SUMMARY"
+          helm show chart kubex/kubex-automation-stack --version "${CHART_VERSION}" > "${STACK_VALIDATION_DIR}/chart.yaml"
+          python3 - "${STACK_VALIDATION_DIR}/chart-metadata.json" "${STACK_VALIDATION_DIR}/chart.yaml" <<'PY'
+          import json
+          import sys
+          from pathlib import Path
+          metadata = json.loads(Path(sys.argv[1]).read_text())
+          metadata["chart_yaml"] = Path(sys.argv[2]).read_text()
+          Path(sys.argv[1]).write_text(json.dumps(metadata, indent=2, sort_keys=True) + "\n")
+          PY
           helm_args=(
             "${RELEASE_NAME}" kubex/kubex-automation-stack
             --version "${KUBEX_VERSION}"
@@ -115,7 +130,8 @@ jobs:
             --set stack.densify.createSecret=false
             --set gpu-process-exporter.enabled=false
             --set node-labeler.enabled=false
-            --set beyla.enabled=false
+            --set beyla.enabled=true
+            --set-string beyla.nodeSelector.stack-validation-real=true
             --set prometheus.server.resources.requests.memory=1Gi
             --set prometheus.server.resources.requests.cpu=500m
             --set prometheus.server.resources.limits.memory=2Gi
@@ -161,6 +177,49 @@ jobs:
           kubectl rollout status deployment/kubex-kube-state-metrics -n "${RELEASE_NAMESPACE}" --timeout=10m
           kubectl rollout status daemonset/kubex-prometheus-node-exporter -n "${RELEASE_NAMESPACE}" --timeout=10m
           kubectl rollout status deployment/k8s-ephemeral-storage-metrics -n "${RELEASE_NAMESPACE}" --timeout=10m
+          kubectl rollout status daemonset/kubex-beyla -n "${RELEASE_NAMESPACE}" --timeout=10m
+          python3 - <<'PY'
+          import json
+          import os
+          import subprocess
+          pods = json.loads(subprocess.check_output([
+              "kubectl", "get", "pods", "-n", os.environ["RELEASE_NAMESPACE"],
+              "-l", "app.kubernetes.io/name=beyla", "-o", "json", "--ignore-not-found",
+          ], text=True))
+          if not any(status.get("ready") for pod in pods.get("items", []) for status in pod.get("status", {}).get("containerStatuses", [])):
+              raise SystemExit("no ready Beyla pod found")
+          PY
+
+      - name: Apply runtime detection fixtures
+        run: |
+          python3 scripts/build_runtime_fixtures.py \
+            --output "${STACK_VALIDATION_DIR}/beyla-runtime-fixtures.yaml"
+          kubectl apply -f "${STACK_VALIDATION_DIR}/beyla-runtime-fixtures.yaml"
+          for runtime in go java nodejs python dotnet; do
+            kubectl rollout status deployment/beyla-runtime-${runtime} \
+              -n stack-validation-runtime --timeout=10m
+          done
+
+      - name: Generate runtime traffic
+        run: |
+          kubectl -n stack-validation-runtime create job beyla-runtime-traffic \
+            --image=curlimages/curl:8.12.1 \
+            --restart=Never \
+            -- sh -c 'for i in $(seq 1 60); do for runtime in go java nodejs python dotnet; do curl --fail --silent --show-error --max-time 5 http://beyla-runtime-${runtime}:8080/; done; sleep 2; done'
+          kubectl wait --for=condition=complete job/beyla-runtime-traffic \
+            -n stack-validation-runtime --timeout=10m
+          kubectl logs -n stack-validation-runtime job/beyla-runtime-traffic
+
+      - name: Validate Beyla runtime detection
+        run: |
+          kubectl port-forward -n "${RELEASE_NAMESPACE}" svc/kubex-prometheus-server 19090:80 >/tmp/stack-prometheus-beyla-port-forward.log 2>&1 &
+          pf_pid=$!
+          trap 'kill ${pf_pid} >/dev/null 2>&1 || true' EXIT
+          python3 scripts/validate_beyla_runtime.py \
+            --prometheus-url http://127.0.0.1:19090 \
+            --beyla-namespace "${RELEASE_NAMESPACE}" \
+            --output "${STACK_VALIDATION_DIR}/beyla-runtime-detection.json" \
+            --timeout 600
 
       - name: Wait for required Prometheus metrics
         run: |
@@ -317,6 +376,9 @@ jobs:
           kubectl logs -n "${RELEASE_NAMESPACE}" job/"${RELEASE_NAME}-kubex-stack-validation" -c kubex-stack > "${STACK_VALIDATION_DIR}/diagnostics/job.log" || true
           kubectl logs -n "${RELEASE_NAMESPACE}" deployment/"${STACK_SERVER_NAME}" > "${STACK_VALIDATION_DIR}/diagnostics/webserver.log" || true
           kubectl logs -n "${RELEASE_NAMESPACE}" deployment/kubex-prometheus-server --all-containers=true > "${STACK_VALIDATION_DIR}/diagnostics/prometheus.log" || true
+          kubectl logs -n "${RELEASE_NAMESPACE}" daemonset/kubex-beyla --all-containers=true > "${STACK_VALIDATION_DIR}/diagnostics/beyla.log" || true
+          kubectl get daemonset,pod -n "${RELEASE_NAMESPACE}" -l app.kubernetes.io/name=beyla -o yaml > "${STACK_VALIDATION_DIR}/diagnostics/beyla.yaml" || true
+          kubectl get deployment,service,pod -n stack-validation-runtime -o yaml > "${STACK_VALIDATION_DIR}/diagnostics/runtime-fixtures.yaml" || true
           kubectl get endpointslice -n "${RELEASE_NAMESPACE}" -o yaml > "${STACK_VALIDATION_DIR}/diagnostics/endpointslices.yaml" || true
           kubectl describe pod -n "${RELEASE_NAMESPACE}" -l "job-name=${RELEASE_NAME}-kubex-stack-validation" > "${STACK_VALIDATION_DIR}/diagnostics/job-pod.txt" || true
           kubectl get events -A --sort-by=.lastTimestamp > "${STACK_VALIDATION_DIR}/diagnostics/events.txt" || true
@@ -330,6 +392,8 @@ jobs:
             --state "${STACK_VALIDATION_DIR}/server-state.json" \
             --csv-dir "${STACK_VALIDATION_DIR}/captured-csv" \
             --status "${JOB_STATUS}" \
+            --chart-metadata "${STACK_VALIDATION_DIR}/chart-metadata.json" \
+            --beyla-detection "${STACK_VALIDATION_DIR}/beyla-runtime-detection.json" \
             --output "${STACK_VALIDATION_DIR}/summary.md"
           cat "${STACK_VALIDATION_DIR}/summary.md" >> "$GITHUB_STEP_SUMMARY"
 

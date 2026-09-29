@@ -27,7 +27,13 @@ def _find_csv(csv_dir: Path, relative: str) -> Path | None:
     return matches[0] if matches else None
 
 
-def summarize(state_path: Path, csv_dir: Path, status: str) -> str:
+def summarize(
+    state_path: Path,
+    csv_dir: Path,
+    status: str,
+    chart_metadata_path: Path | None = None,
+    beyla_detection_path: Path | None = None,
+) -> str:
     uploads = 0
     if state_path.exists():
         try:
@@ -53,6 +59,19 @@ def summarize(state_path: Path, csv_dir: Path, status: str) -> str:
             with path.open(newline="", encoding="utf-8", errors="replace") as handle:
                 rows = max(sum(1 for row in csv.reader(handle) if any(cell.strip() for cell in row)) - 1, 0)
         lines.append(f"| `{relative}` | {rows} |")
+    if chart_metadata_path is not None and chart_metadata_path.exists():
+        try:
+            metadata = json.loads(chart_metadata_path.read_text(encoding="utf-8"))
+            lines.extend(["", f"**Automation-stack chart:** `{metadata.get('version', 'unknown')}`"])
+        except (OSError, json.JSONDecodeError):
+            lines.extend(["", "**Automation-stack chart:** metadata unavailable"])
+    if beyla_detection_path is not None and beyla_detection_path.exists():
+        try:
+            detection = json.loads(beyla_detection_path.read_text(encoding="utf-8"))
+            detected = ", ".join(sorted(name for name, entries in detection.get("detected", {}).items() if entries))
+            lines.extend(["", f"**Beyla runtimes detected:** {detected or 'none'}"])
+        except (OSError, json.JSONDecodeError):
+            lines.extend(["", "**Beyla runtimes detected:** unavailable"])
     return "\n".join(lines) + "\n"
 
 
@@ -62,10 +81,15 @@ def main() -> int:
     parser.add_argument("--csv-dir", type=Path, required=True)
     parser.add_argument("--status", required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--chart-metadata", type=Path)
+    parser.add_argument("--beyla-detection", type=Path)
     args = parser.parse_args()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(summarize(args.state, args.csv_dir, args.status), encoding="utf-8")
+    args.output.write_text(
+        summarize(args.state, args.csv_dir, args.status, args.chart_metadata, args.beyla_detection),
+        encoding="utf-8",
+    )
     return 0
 
 

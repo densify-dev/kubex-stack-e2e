@@ -10,11 +10,45 @@ from unittest.mock import MagicMock, patch
 
 from scripts.inject_host_aliases import inject
 from scripts.build_stack_validation_workloads import build
+from scripts.build_runtime_fixtures import RUNTIMES, build as build_runtime_fixtures
+from scripts.resolve_stack_chart import select_latest
 from scripts.summarize_stack_validation import summarize
 from scripts.validate_stack_upload import _load_state, main as validate_main
+from scripts.validate_beyla_runtime import validate
 
 
 class StackValidationHelpersTest(unittest.TestCase):
+    def test_runtime_fixtures_cover_required_runtimes_and_real_node(self) -> None:
+        rendered = build_runtime_fixtures()
+
+        self.assertEqual(set(RUNTIMES), {"go", "java", "nodejs", "python", "dotnet"})
+        for runtime in RUNTIMES:
+            self.assertIn(f"name: beyla-runtime-{runtime}", rendered)
+            self.assertIn(f"kubex.ai/runtime: {runtime}", rendered)
+        self.assertEqual(rendered.count("stack-validation-real: \"true\""), 5)
+        self.assertIn("kind: Service", rendered)
+        self.assertIn("kind: ConfigMap", rendered)
+
+    def test_latest_chart_selection_uses_helm_order(self) -> None:
+        selected = select_latest([
+            {"name": "kubex/kubex-automation-stack", "version": "1.2.0"},
+            {"name": "kubex/kubex-automation-stack", "version": "1.1.0"},
+        ])
+        self.assertEqual(selected["version"], "1.2.0")
+
+    def test_validate_beyla_runtime_requires_all_runtime_labels(self) -> None:
+        responses = [
+            [{"metric": {"service": "kubex-beyla"}, "value": [0, "1"]}],
+            [
+                {"metric": {"namespace": "stack-validation-runtime", "runtime": runtime, "pod": f"beyla-runtime-{runtime}-abc"}, "value": [0, "1"]}
+                for runtime in ("go", "java", "nodejs", "python", "dotnet")
+            ],
+        ]
+        with patch("scripts.validate_beyla_runtime.query", side_effect=responses):
+            result = validate("http://prometheus", "stack-validation-runtime")
+
+        self.assertEqual(result["missing"], [])
+        self.assertEqual(result["healthy_beyla_targets"], 1)
     def test_stack_workloads_are_mixed_resource_bearing_and_kwok_scheduled(self) -> None:
         rendered = build()
 
