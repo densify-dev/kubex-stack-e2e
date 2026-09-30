@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 EXPECTED = {"go", "java", "nodejs", "python", "dotnet"}
-RUNTIME_ALIASES = {"go": {"go"}, "java": {"java", "jvm"}, "nodejs": {"node", "nodejs", "javascript"}, "python": {"python", "cpython"}, "dotnet": {"dotnet", ".net", "clr"}}
+RUNTIME_LABELS = {"go": "go", "java": "java", "nodejs": "nodejs", "python": "python", "dotnet": "dotnet"}
 
 
 def query(base_url: str, expression: str) -> list[dict]:
@@ -31,22 +31,19 @@ def validate(
     healthy_targets = [item for item in targets if str(item.get("value", [None, "0"])[1]) == "1"]
     if not healthy_targets:
         raise ValueError("Prometheus has no healthy kubex-beyla target")
-    results = query(base_url, "survey_info")
+    results = query(base_url, f'survey_info{{k8s_namespace_name="{namespace}"}}')
     if not results:
         raise ValueError("Prometheus returned no survey_info series")
     found: dict[str, list[dict]] = {runtime: [] for runtime in EXPECTED}
     for result in results:
         labels = result.get("metric", {})
-        runtime_value = next((labels.get(key, "").lower() for key in ("runtime", "process_runtime", "language") if labels.get(key)), "")
-        if not runtime_value:
-            continue
-        if labels.get("namespace") != namespace and labels.get("k8s_namespace") != namespace:
-            continue
-        for runtime, aliases in RUNTIME_ALIASES.items():
-            if runtime_value in aliases:
+        runtime_value = labels.get("telemetry_sdk_language", "").lower()
+        deployment = labels.get("k8s_deployment_name", "")
+        for runtime, label in RUNTIME_LABELS.items():
+            if runtime_value == label and deployment == f"beyla-runtime-{runtime}":
                 found[runtime].append(labels)
     missing = sorted(runtime for runtime, entries in found.items() if not entries)
-    return {"metric": "survey_info", "namespace": namespace, "expected": sorted(EXPECTED), "detected": {key: value for key, value in found.items()}, "missing": missing, "series_count": len(results), "healthy_beyla_targets": len(healthy_targets)}
+    return {"metric": "survey_info", "namespace": namespace, "expected": sorted(EXPECTED), "detected": {key: value for key, value in found.items()}, "missing": missing, "series_count": len(results), "survey_series": [result.get("metric", {}) for result in results], "healthy_beyla_targets": len(healthy_targets)}
 
 
 def main() -> int:

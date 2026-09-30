@@ -38,9 +38,9 @@ class StackValidationHelpersTest(unittest.TestCase):
 
     def test_validate_beyla_runtime_requires_all_runtime_labels(self) -> None:
         responses = [
-            [{"metric": {"service": "kubex-beyla"}, "value": [0, "1"]}],
+            [{"metric": {"namespace": "kubex", "service": "kubex-beyla"}, "value": [0, "1"]}],
             [
-                {"metric": {"namespace": "stack-validation-runtime", "runtime": runtime, "pod": f"beyla-runtime-{runtime}-abc"}, "value": [0, "1"]}
+                {"metric": {"k8s_namespace_name": "stack-validation-runtime", "telemetry_sdk_language": runtime, "k8s_deployment_name": f"beyla-runtime-{runtime}"}, "value": [0, "1"]}
                 for runtime in ("go", "java", "nodejs", "python", "dotnet")
             ],
         ]
