@@ -328,7 +328,7 @@ jobs:
       - name: Create data forwarder job
         run: |
           kubectl create job "${RELEASE_NAME}-kubex-stack-validation" \
-            --from=cronjob/"${RELEASE_NAME}-kubex-stack" \
+            --from=cronjob/kubex-stack \
             -n "${RELEASE_NAMESPACE}"
 
       - name: Wait for data forwarder job
