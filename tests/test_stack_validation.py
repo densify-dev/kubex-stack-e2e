@@ -12,7 +12,7 @@ from scripts.inject_host_aliases import inject
 from scripts.build_stack_validation_workloads import build
 from scripts.build_runtime_fixtures import RUNTIMES, build as build_runtime_fixtures
 from scripts.resolve_stack_chart import select_latest
-from scripts.summarize_stack_validation import summarize
+from scripts.summarize_stack_validation import collection_results, summarize
 from scripts.validate_stack_upload import _load_state, main as validate_main
 from scripts.validate_beyla_runtime import validate
 
@@ -78,6 +78,25 @@ class StackValidationHelpersTest(unittest.TestCase):
             self.assertIn("**Captured uploads:** 2", result)
             self.assertIn("| `cluster/config.csv` | 2 |", result)
             self.assertIn("| `container/config.csv` | missing |", result)
+
+    def test_collection_results_reports_csv_schema_and_beyla_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            csv_dir = root / "captured"
+            path = csv_dir / "cluster" / "config.csv"
+            path.parent.mkdir(parents=True)
+            path.write_text("name,value\ncluster-a,1\n\n", encoding="utf-8")
+            detection = root / "beyla.json"
+            detection.write_text(json.dumps({"healthy_beyla_targets": 1, "detected": {"go": [{}, {}], "java": [{}]}}), encoding="utf-8")
+
+            result = collection_results(root / "state.json", csv_dir, "success", beyla_detection_path=detection)
+
+            self.assertEqual(result["beyla_runtimes"]["go"], 2)
+            self.assertEqual(result["beyla_runtimes"]["java"], 1)
+            self.assertEqual(result["beyla_runtimes"]["python"], 0)
+            self.assertEqual(result["beyla_total_series"], 3)
+            self.assertEqual(result["csv_files"]["cluster/config.csv"], {"exists": True, "columns": 2, "column_names": ["name", "value"], "data_rows": 1, "has_data": True})
+            self.assertFalse(result["csv_files"]["node/config.csv"]["has_data"])
 
     def test_load_state_retries_disconnected_port_forward(self) -> None:
         response = MagicMock()

@@ -393,8 +393,10 @@ jobs:
             --status "${JOB_STATUS}" \
             --chart-metadata "${STACK_VALIDATION_DIR}/chart-metadata.json" \
             --beyla-detection "${STACK_VALIDATION_DIR}/beyla-runtime-detection.json" \
+            --collection-results "${STACK_VALIDATION_DIR}/collection-results.json" \
             --output "${STACK_VALIDATION_DIR}/summary.md"
           cat "${STACK_VALIDATION_DIR}/summary.md" >> "$GITHUB_STEP_SUMMARY"
+          cat "${STACK_VALIDATION_DIR}/collection-results.json"
 
       - name: Upload artifacts
         if: always()
