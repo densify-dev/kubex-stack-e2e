@@ -193,7 +193,8 @@ jobs:
       - name: Apply runtime detection fixtures
         run: |
           python3 scripts/build_runtime_fixtures.py \
-            --output "${STACK_VALIDATION_DIR}/beyla-runtime-fixtures.yaml"
+            --output "${STACK_VALIDATION_DIR}/beyla-runtime-fixtures.yaml" \
+            --expected-output "${STACK_VALIDATION_DIR}/beyla-runtime-expected.json"
           kubectl apply -f "${STACK_VALIDATION_DIR}/beyla-runtime-fixtures.yaml"
           for runtime in go java nodejs python dotnet; do
             kubectl rollout status deployment/beyla-runtime-${runtime} \
@@ -217,6 +218,7 @@ jobs:
           python3 scripts/validate_beyla_runtime.py \
             --prometheus-url http://127.0.0.1:19090 \
             --beyla-namespace "${RELEASE_NAMESPACE}" \
+            --expected-fixtures "${STACK_VALIDATION_DIR}/beyla-runtime-expected.json" \
             --output "${STACK_VALIDATION_DIR}/beyla-runtime-detection.json" \
             --timeout 600
 
@@ -225,55 +227,12 @@ jobs:
           kubectl port-forward -n "${RELEASE_NAMESPACE}" svc/kubex-prometheus-server 19090:80 >/tmp/stack-prometheus-port-forward.log 2>&1 &
           pf_pid=$!
           trap 'kill ${pf_pid} >/dev/null 2>&1 || true' EXIT
-          python3 - <<'PY'
-          import json
-          import time
-          import urllib.parse
-          import urllib.request
-          from pathlib import Path
-
-          metrics = [
-              "kubernetes_build_info",
-              "kube_node_info",
-              "kube_node_status_capacity",
-              "node_cpu_seconds_total",
-              "kube_pod_info",
-              "kube_pod_container_resource_requests",
-              "container_cpu_usage_seconds_total",
-              "ephemeral_storage_node_available",
-          ]
-          base_url = "http://127.0.0.1:19090"
-          output = Path("artifacts/stack-validation")
-          deadline = time.monotonic() + 600
-          while time.monotonic() < deadline:
-              missing = []
-              for metric in metrics:
-                  try:
-                      query = urllib.parse.urlencode({"query": metric})
-                      with urllib.request.urlopen(f"{base_url}/api/v1/query?{query}", timeout=10) as response:
-                          result = json.load(response).get("data", {}).get("result", [])
-                  except Exception:
-                      result = []
-                  if not result:
-                      missing.append(metric)
-              try:
-                  with urllib.request.urlopen(f"{base_url}/api/v1/targets", timeout=10) as response:
-                      targets = json.load(response)
-                  output.joinpath("prometheus-targets.json").write_text(
-                      json.dumps(targets, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-                  )
-              except Exception:
-                  pass
-              if not missing:
-                  print("required Prometheus metrics are available")
-                  # The collector rounds interval boundaries down. Ensure the
-                  # completed one-minute window contains exporter samples.
-                  time.sleep(70)
-                  raise SystemExit(0)
-              print(f"waiting for Prometheus metrics: {', '.join(missing)}", flush=True)
-              time.sleep(10)
-          raise SystemExit("timed out waiting for required Prometheus metrics")
-          PY
+          python3 scripts/validate_prometheus_metrics.py \
+            --prometheus-url http://127.0.0.1:19090 \
+            --output "${STACK_VALIDATION_DIR}/prometheus-metric-validation.json" \
+            --timeout 600
+          curl -fsS http://127.0.0.1:19090/api/v1/targets \
+            > "${STACK_VALIDATION_DIR}/prometheus-targets.json"
 
       - name: Create real-node probe workload
         run: |
@@ -394,6 +353,7 @@ jobs:
             --chart-metadata "${STACK_VALIDATION_DIR}/chart-metadata.json" \
             --beyla-detection "${STACK_VALIDATION_DIR}/beyla-runtime-detection.json" \
             --collection-results "${STACK_VALIDATION_DIR}/collection-results.json" \
+            --prometheus-validation "${STACK_VALIDATION_DIR}/prometheus-metric-validation.json" \
             --output "${STACK_VALIDATION_DIR}/summary.md"
           cat "${STACK_VALIDATION_DIR}/summary.md" >> "$GITHUB_STEP_SUMMARY"
           cat "${STACK_VALIDATION_DIR}/collection-results.json"

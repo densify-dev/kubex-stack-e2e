@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 
@@ -74,9 +75,13 @@ def json_array(values: list[str]) -> str:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--expected-output", type=Path)
     args = parser.parse_args()
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(build(), encoding="utf-8")
+    if args.expected_output:
+        args.expected_output.parent.mkdir(parents=True, exist_ok=True)
+        args.expected_output.write_text(json.dumps({"namespace": NAMESPACE, "fixtures": [{"runtime": runtime, "deployment": f"beyla-runtime-{runtime}"} for runtime in RUNTIMES]}, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     return 0
 
 

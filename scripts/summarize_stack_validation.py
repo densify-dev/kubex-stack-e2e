@@ -20,6 +20,12 @@ REQUIRED_FILES = [
     "container/attributes.csv",
 ]
 
+ENTITY_KEYS = {
+    "cluster": ("Name",),
+    "node": ("ClusterName", "NodeName"),
+    "container": ("ClusterName", "Namespace", "EntityName", "ContainerName"),
+}
+
 
 def _find_csv(csv_dir: Path, relative: str) -> Path | None:
     direct = csv_dir / relative
@@ -35,6 +41,7 @@ def collection_results(
     status: str,
     chart_metadata_path: Path | None = None,
     beyla_detection_path: Path | None = None,
+    prometheus_validation_path: Path | None = None,
 ) -> dict[str, object]:
     uploads = 0
     if state_path.exists():
@@ -46,6 +53,7 @@ def collection_results(
             pass
 
     csv_files: dict[str, object] = {}
+    csv_rows: dict[str, list[dict[str, str]]] = {}
     for relative in REQUIRED_FILES:
         path = _find_csv(csv_dir, relative)
         if path is None:
@@ -55,6 +63,7 @@ def collection_results(
             rows = list(csv.reader(handle))
         header = rows[0] if rows else []
         data_rows = sum(1 for row in rows[1:] if any(cell.strip() for cell in row))
+        csv_rows[relative] = [dict(zip(header, row)) for row in rows[1:] if any(cell.strip() for cell in row)]
         csv_files[relative] = {
             "exists": True,
             "columns": len(header),
@@ -62,6 +71,40 @@ def collection_results(
             "data_rows": data_rows,
             "has_data": bool(header) and data_rows > 0,
         }
+
+    integrity: dict[str, object] = {"valid": True, "duplicate_rows": {}, "entity_counts": {}, "discrepancies": []}
+    for kind, key_columns in ENTITY_KEYS.items():
+        config_name = f"{kind}/config.csv"
+        attributes_name = f"{kind}/attributes.csv"
+        config_rows = csv_rows.get(config_name, [])
+        attribute_rows = csv_rows.get(attributes_name, [])
+        if not config_rows and not attribute_rows:
+            continue
+        if not config_rows or not attribute_rows:
+            integrity["discrepancies"].append(f"{config_name} and {attributes_name} do not both contain data")
+            continue
+        config_keys = [tuple(row.get(column, "") for column in key_columns) for row in config_rows]
+        attribute_keys = [tuple(row.get(column, "") for column in key_columns) for row in attribute_rows]
+        config_set = set(config_keys)
+        attribute_set = set(attribute_keys)
+        duplicate_config = len(config_keys) - len(config_set)
+        duplicate_attributes = len(attribute_keys) - len(attribute_set)
+        if duplicate_config:
+            integrity["duplicate_rows"][config_name] = duplicate_config
+        if duplicate_attributes:
+            integrity["duplicate_rows"][attributes_name] = duplicate_attributes
+        if config_set != attribute_set:
+            integrity["discrepancies"].append({
+                "kind": kind,
+                "config_only": len(config_set - attribute_set),
+                "attributes_only": len(attribute_set - config_set),
+            })
+        integrity["entity_counts"][kind] = {
+            "config": len(config_set),
+            "attributes": len(attribute_set),
+            "keys": list(key_columns),
+        }
+    integrity["valid"] = not integrity["duplicate_rows"] and not integrity["discrepancies"]
 
     runtimes = {runtime: 0 for runtime in sorted({"go", "java", "nodejs", "python", "dotnet"})}
     healthy_targets = 0
@@ -84,6 +127,13 @@ def collection_results(
         except (OSError, json.JSONDecodeError):
             pass
 
+    prometheus_validation = None
+    if prometheus_validation_path is not None and prometheus_validation_path.exists():
+        try:
+            prometheus_validation = json.loads(prometheus_validation_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            prometheus_validation = {"valid": False, "error": "unable to read validation output"}
+
     return {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "run_id": os.getenv("GITHUB_RUN_ID"),
@@ -95,6 +145,8 @@ def collection_results(
         "beyla_runtimes": runtimes,
         "beyla_total_series": sum(runtimes.values()),
         "healthy_beyla_targets": healthy_targets,
+        "integrity": integrity,
+        "prometheus_metrics": prometheus_validation,
     }
 
 
@@ -155,6 +207,7 @@ def main() -> int:
     parser.add_argument("--chart-metadata", type=Path)
     parser.add_argument("--beyla-detection", type=Path)
     parser.add_argument("--collection-results", type=Path)
+    parser.add_argument("--prometheus-validation", type=Path)
     args = parser.parse_args()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -165,9 +218,11 @@ def main() -> int:
     if args.collection_results:
         args.collection_results.parent.mkdir(parents=True, exist_ok=True)
         args.collection_results.write_text(
-            json.dumps(collection_results(args.state, args.csv_dir, args.status, args.chart_metadata, args.beyla_detection), indent=2, sort_keys=True) + "\n",
+            json.dumps(collection_results(args.state, args.csv_dir, args.status, args.chart_metadata, args.beyla_detection, args.prometheus_validation), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
+        if not json.loads(args.collection_results.read_text(encoding="utf-8")).get("integrity", {}).get("valid", False):
+            raise SystemExit("collection integrity checks failed")
     return 0
 
 
