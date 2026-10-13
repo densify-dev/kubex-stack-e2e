@@ -282,7 +282,16 @@ jobs:
               stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
               print(f'[{stamp}] stack validation soak {minute + 1}/{sys.argv[1]}', flush=True)
               time.sleep(60)
-          PY
+           PY
+
+      - name: Validate Kubernetes and Prometheus consistency
+        run: |
+          kubectl port-forward -n "${RELEASE_NAMESPACE}" svc/kubex-prometheus-server 19090:80 >/tmp/stack-prometheus-consistency-port-forward.log 2>&1 &
+          pf_pid=$!
+          trap 'kill ${pf_pid} >/dev/null 2>&1 || true' EXIT
+          python3 scripts/validate_cluster_metric_consistency.py \
+            --prometheus-url http://127.0.0.1:19090 \
+            --output "${STACK_VALIDATION_DIR}/cluster-metric-consistency.json"
 
       - name: Create data forwarder job
         run: |
@@ -354,6 +363,7 @@ jobs:
             --beyla-detection "${STACK_VALIDATION_DIR}/beyla-runtime-detection.json" \
             --collection-results "${STACK_VALIDATION_DIR}/collection-results.json" \
             --prometheus-validation "${STACK_VALIDATION_DIR}/prometheus-metric-validation.json" \
+            --cluster-consistency "${STACK_VALIDATION_DIR}/cluster-metric-consistency.json" \
             --output "${STACK_VALIDATION_DIR}/summary.md"
           cat "${STACK_VALIDATION_DIR}/summary.md" >> "$GITHUB_STEP_SUMMARY"
           cat "${STACK_VALIDATION_DIR}/collection-results.json"

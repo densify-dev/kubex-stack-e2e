@@ -42,6 +42,7 @@ def collection_results(
     chart_metadata_path: Path | None = None,
     beyla_detection_path: Path | None = None,
     prometheus_validation_path: Path | None = None,
+    cluster_consistency_path: Path | None = None,
 ) -> dict[str, object]:
     uploads = 0
     if state_path.exists():
@@ -133,6 +134,12 @@ def collection_results(
             prometheus_validation = json.loads(prometheus_validation_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             prometheus_validation = {"valid": False, "error": "unable to read validation output"}
+    cluster_consistency = None
+    if cluster_consistency_path is not None and cluster_consistency_path.exists():
+        try:
+            cluster_consistency = json.loads(cluster_consistency_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            cluster_consistency = {"valid": False, "error": "unable to read consistency output"}
 
     return {
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
@@ -147,6 +154,7 @@ def collection_results(
         "healthy_beyla_targets": healthy_targets,
         "integrity": integrity,
         "prometheus_metrics": prometheus_validation,
+        "cluster_metric_consistency": cluster_consistency,
     }
 
 
@@ -208,6 +216,7 @@ def main() -> int:
     parser.add_argument("--beyla-detection", type=Path)
     parser.add_argument("--collection-results", type=Path)
     parser.add_argument("--prometheus-validation", type=Path)
+    parser.add_argument("--cluster-consistency", type=Path)
     args = parser.parse_args()
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -218,7 +227,7 @@ def main() -> int:
     if args.collection_results:
         args.collection_results.parent.mkdir(parents=True, exist_ok=True)
         args.collection_results.write_text(
-            json.dumps(collection_results(args.state, args.csv_dir, args.status, args.chart_metadata, args.beyla_detection, args.prometheus_validation), indent=2, sort_keys=True) + "\n",
+            json.dumps(collection_results(args.state, args.csv_dir, args.status, args.chart_metadata, args.beyla_detection, args.prometheus_validation, args.cluster_consistency), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         if not json.loads(args.collection_results.read_text(encoding="utf-8")).get("integrity", {}).get("valid", False):

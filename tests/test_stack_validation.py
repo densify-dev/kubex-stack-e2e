@@ -16,6 +16,7 @@ from scripts.summarize_stack_validation import collection_results, summarize
 from scripts.validate_stack_upload import _load_state, main as validate_main
 from scripts.validate_beyla_runtime import validate
 from scripts.validate_prometheus_metrics import validate as validate_prometheus
+from scripts.validate_cluster_metric_consistency import validate as validate_cluster_metrics
 
 
 class StackValidationHelpersTest(unittest.TestCase):
@@ -61,6 +62,28 @@ class StackValidationHelpersTest(unittest.TestCase):
         self.assertFalse(result["valid"])
         self.assertEqual(result["metrics"]["metric_a"]["series_count"], 1)
         self.assertEqual(result["missing"], ["metric_b"])
+
+    def test_cluster_metric_consistency_matches_kubernetes_identity_sets(self) -> None:
+        kubernetes = {
+            "items": [
+                {"metadata": {"name": "node-a", "labels": {"stack-validation-real": "true"}}},
+                {"metadata": {"name": "node-b", "labels": {"stack-validation-real": "false"}}},
+            ]
+        }
+        with patch(
+            "scripts.validate_cluster_metric_consistency.kubectl_json",
+            side_effect=[kubernetes, {"items": [{"metadata": {"namespace": "ns", "name": "pod-a"}}]}],
+        ), patch(
+            "scripts.validate_cluster_metric_consistency.query",
+            side_effect=[
+                [{"metric": {"node": "node-a"}, "value": [0, "1"]}],
+                [{"metric": {"namespace": "ns", "pod": "pod-a"}, "value": [0, "1"]}],
+            ],
+        ):
+            result = validate_cluster_metrics("http://prometheus")
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["checks"]["nodes"]["kubernetes_count"], 1)
+        self.assertEqual(result["checks"]["pods"]["prometheus_count"], 1)
 
     def test_validate_beyla_runtime_rejects_duplicate_unexpected_and_inactive_series(self) -> None:
         responses = [
