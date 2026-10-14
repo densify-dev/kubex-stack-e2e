@@ -282,7 +282,7 @@ jobs:
               stamp = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
               print(f'[{stamp}] stack validation soak {minute + 1}/{sys.argv[1]}', flush=True)
               time.sleep(60)
-           PY
+          PY
 
       - name: Validate Kubernetes and Prometheus consistency
         run: |
