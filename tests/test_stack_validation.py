@@ -80,6 +80,10 @@ class StackValidationHelpersTest(unittest.TestCase):
                     {"metric": {"node": "node-a"}, "value": [0, "1"]},
                     {"metric": {"node": "node-b"}, "value": [0, "1"]},
                 ],
+                [
+                    {"metric": {"node": "node-a", "label_stack_validation_real": "true"}, "value": [0, "1"]},
+                    {"metric": {"node": "node-b", "label_stack_validation_real": "false"}, "value": [0, "1"]},
+                ],
                 [{"metric": {"namespace": "ns", "pod": "pod-a"}, "value": [0, "1"]}],
             ],
         ):
@@ -87,6 +91,25 @@ class StackValidationHelpersTest(unittest.TestCase):
         self.assertTrue(result["valid"])
         self.assertEqual(result["checks"]["nodes"]["kubernetes_count"], 2)
         self.assertEqual(result["checks"]["pods"]["prometheus_count"], 1)
+
+    def test_cluster_metric_consistency_detects_node_label_mismatch(self) -> None:
+        with patch(
+            "scripts.validate_cluster_metric_consistency.kubectl_json",
+            side_effect=[
+                {"items": [{"metadata": {"name": "node-a", "labels": {"stack-validation-real": "true"}}}]},
+                {"items": []},
+            ],
+        ), patch(
+            "scripts.validate_cluster_metric_consistency.query",
+            side_effect=[
+                [{"metric": {"node": "node-a"}, "value": [0, "1"]}],
+                [{"metric": {"node": "node-a", "label_stack_validation_real": "false"}, "value": [0, "1"]}],
+                [],
+            ],
+        ):
+            result = validate_cluster_metrics("http://prometheus")
+        self.assertFalse(result["checks"]["node_labels"]["valid"])
+        self.assertIn("node-a", result["checks"]["node_labels"]["mismatches"])
 
     def test_validate_beyla_runtime_rejects_duplicate_unexpected_and_inactive_series(self) -> None:
         responses = [

@@ -9,6 +9,7 @@ import subprocess
 import urllib.parse
 import urllib.request
 from pathlib import Path
+import re
 
 
 def kubectl_json(resource: str) -> dict:
@@ -24,13 +25,19 @@ def query(base_url: str, expression: str) -> list[dict]:
     return payload.get("data", {}).get("result", [])
 
 
+def prometheus_label_name(key: str) -> str:
+    return "label_" + re.sub(r"[^a-zA-Z0-9_]", "_", key)
+
+
 def validate(base_url: str) -> dict:
-    nodes = {item["metadata"]["name"] for item in kubectl_json("nodes").get("items", [])}
+    node_items = kubectl_json("nodes").get("items", [])
+    nodes = {item["metadata"]["name"] for item in node_items}
     pods = {
         (item["metadata"].get("namespace", ""), item["metadata"]["name"])
         for item in kubectl_json("pods").get("items", [])
     }
     node_series = query(base_url, "kube_node_info")
+    node_label_series = query(base_url, "kube_node_labels")
     pod_series = query(base_url, "kube_pod_info")
     prometheus_nodes = {item.get("metric", {}).get("node") for item in node_series} - {None, ""}
     prometheus_pods = {
@@ -38,6 +45,30 @@ def validate(base_url: str) -> dict:
         for item in pod_series
         if item.get("metric", {}).get("pod")
     }
+    prometheus_labels = {
+        item.get("metric", {}).get("node"): item.get("metric", {})
+        for item in node_label_series
+        if item.get("metric", {}).get("node")
+    }
+    label_mismatches = {}
+    for item in node_items:
+        node = item["metadata"]["name"]
+        expected = item["metadata"].get("labels", {})
+        actual = prometheus_labels.get(node, {})
+        missing = {
+            key: value for key, value in expected.items()
+            if actual.get(prometheus_label_name(key)) != value
+        }
+        if missing or node not in prometheus_labels:
+            label_mismatches[node] = {
+                "kubernetes": expected,
+                "prometheus": {
+                    key.removeprefix("label_"): value
+                    for key, value in actual.items()
+                    if key.startswith("label_")
+                },
+                "missing_or_mismatched": missing,
+            }
     checks = {
         "nodes": {
             "kubernetes_count": len(nodes),
@@ -51,9 +82,18 @@ def validate(base_url: str) -> dict:
             "kubernetes_only": sorted([list(item) for item in pods - prometheus_pods]),
             "prometheus_only": sorted([list(item) for item in prometheus_pods - pods]),
         },
+        "node_labels": {
+            "kubernetes_count": len(nodes),
+            "prometheus_count": len(prometheus_labels),
+            "mismatches": label_mismatches,
+        },
     }
     for check in checks.values():
-        check["valid"] = not check["kubernetes_only"] and not check["prometheus_only"]
+        check["valid"] = (
+            not check.get("kubernetes_only")
+            and not check.get("prometheus_only")
+            and not check.get("mismatches")
+        )
     return {"valid": all(check["valid"] for check in checks.values()), "checks": checks}
 
 
