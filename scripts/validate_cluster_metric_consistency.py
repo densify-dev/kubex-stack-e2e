@@ -25,11 +25,7 @@ def query(base_url: str, expression: str) -> list[dict]:
 
 
 def validate(base_url: str) -> dict:
-    nodes = {
-        item["metadata"]["name"]
-        for item in kubectl_json("nodes").get("items", [])
-        if item["metadata"].get("labels", {}).get("stack-validation-real") == "true"
-    }
+    nodes = {item["metadata"]["name"] for item in kubectl_json("nodes").get("items", [])}
     pods = {
         (item["metadata"].get("namespace", ""), item["metadata"]["name"])
         for item in kubectl_json("pods").get("items", [])

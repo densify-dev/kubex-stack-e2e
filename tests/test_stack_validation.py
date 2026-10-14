@@ -76,13 +76,16 @@ class StackValidationHelpersTest(unittest.TestCase):
         ), patch(
             "scripts.validate_cluster_metric_consistency.query",
             side_effect=[
-                [{"metric": {"node": "node-a"}, "value": [0, "1"]}],
+                [
+                    {"metric": {"node": "node-a"}, "value": [0, "1"]},
+                    {"metric": {"node": "node-b"}, "value": [0, "1"]},
+                ],
                 [{"metric": {"namespace": "ns", "pod": "pod-a"}, "value": [0, "1"]}],
             ],
         ):
             result = validate_cluster_metrics("http://prometheus")
         self.assertTrue(result["valid"])
-        self.assertEqual(result["checks"]["nodes"]["kubernetes_count"], 1)
+        self.assertEqual(result["checks"]["nodes"]["kubernetes_count"], 2)
         self.assertEqual(result["checks"]["pods"]["prometheus_count"], 1)
 
     def test_validate_beyla_runtime_rejects_duplicate_unexpected_and_inactive_series(self) -> None:
