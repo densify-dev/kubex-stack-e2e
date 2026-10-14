@@ -57,7 +57,7 @@ def validate(base_url: str) -> dict:
         actual = prometheus_labels.get(node, {})
         missing = {
             key: value for key, value in expected.items()
-            if actual.get(prometheus_label_name(key)) != value
+            if value != "" and actual.get(prometheus_label_name(key)) != value
         }
         if missing or node not in prometheus_labels:
             label_mismatches[node] = {
@@ -68,6 +68,9 @@ def validate(base_url: str) -> dict:
                     if key.startswith("label_")
                 },
                 "missing_or_mismatched": missing,
+                "presence_only_labels": {
+                    key: value for key, value in expected.items() if value == ""
+                },
             }
     checks = {
         "nodes": {
