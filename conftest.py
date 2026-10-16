@@ -25,6 +25,11 @@ REPO_ROOT = Path(__file__).parent.resolve()
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("kind-functional")
     group.addoption("--stack-chart-version", default=None, help="override the stack chart version")
+    group.addoption(
+        "--collector-image",
+        default=None,
+        help="override the collector image (empty = scenario spec, else the chart default)",
+    )
     group.addoption("--keep-cluster", action="store_true", help="leave the Kind cluster running")
     group.addoption(
         "--artifacts-root",
@@ -49,6 +54,7 @@ def stack_run(pytestconfig: pytest.Config, repo_root: Path):
 
     artifacts_root = (repo_root / str(pytestconfig.getoption("artifacts_root"))).resolve()
     chart_version = pytestconfig.getoption("stack_chart_version")
+    collector_image = pytestconfig.getoption("collector_image") or None
     keep_cluster = bool(pytestconfig.getoption("keep_cluster"))
 
     @contextmanager
@@ -59,6 +65,7 @@ def stack_run(pytestconfig: pytest.Config, repo_root: Path):
             repo_root,
             artifacts_root,
             chart_version,
+            collector_image,
             keep_cluster,
         ) as active:
             yield active

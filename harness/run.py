@@ -6,6 +6,7 @@ through archive capture happens here; assertions happen in the scenario module.
 
 from __future__ import annotations
 
+import re
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -23,6 +24,15 @@ from harness.spec import ScenarioSpec
 # Snapshot cadence during the collection window. Fixed, so drift detection has
 # the same resolution whether the window is 3 minutes or 60.
 SNAPSHOT_INTERVAL_SECONDS = 60.0
+
+# Recorded in versions.json and summary.md; None until the run learns the value.
+VERSION_FIELDS = (
+    "chart_version",
+    "collector_image_requested",
+    "collector_image_digest",
+    "collector_image_id",
+    "collector_version",
+)
 
 
 @dataclass
@@ -84,6 +94,7 @@ def execute(
     repo_root: Path,
     artifacts_root: Path,
     chart_version: str | None = None,
+    collector_image: str | None = None,
     keep_cluster: bool = False,
 ) -> Iterator[Run]:
     """Provision, collect, capture, yield, then always diagnose and tear down."""
@@ -93,6 +104,7 @@ def execute(
     created = False
     failed = False
     job_name: str | None = None
+    versions: dict[str, Any] = dict.fromkeys(VERSION_FIELDS)
     try:
         resources = stack.resource_paths(scenario, scenario_dir)
         config_path = artifacts / "kind-config.yaml"
@@ -106,14 +118,17 @@ def execute(
 
         receiver.deploy(repo_root)
         fixtures.deploy(scenario, repo_root, artifacts)
-        stack.install(scenario, repo_root, artifacts, receiver.cluster_ip(repo_root), chart_version)
+        cronjob = stack.install(
+            scenario, repo_root, artifacts, receiver.cluster_ip(repo_root), chart_version, collector_image, versions
+        )
         stack.apply_resources(resources, repo_root)
         stack.await_lifecycle(scenario, repo_root)
 
         prometheus.await_ready(scenario.prometheus, scenario.stack.namespace, repo_root, artifacts)
 
         snapshots = _await_window(scenario, repo_root)
-        job_name = stack.trigger_forwarder(scenario, repo_root)
+        job_name = stack.trigger_forwarder(scenario, repo_root, cronjob)
+        versions["collector_image_id"] = stack.job_image_id(job_name, scenario.stack.namespace, repo_root)
         state = receiver.capture_state(repo_root, artifacts)
         snapshots.append(take_snapshot("after upload", repo_root))
 
@@ -121,6 +136,9 @@ def execute(
             receiver.archive_bytes(state), scenario.prefix, artifacts / "extracted-csv"
         )
         uploads = receiver.archive_upload_count(state)
+        log = archive.raw("log.txt").decode("utf-8", "replace") if "log.txt" in archive else ""
+        found = re.search(r"collection version (\S+)", log.splitlines()[0]) if log.strip() else None
+        versions["collector_version"] = found.group(1) if found else "unknown"
         oracle = Oracle(snapshots=snapshots)
         write_json(artifacts / "archive-paths.json", archive.paths)
 
@@ -149,12 +167,14 @@ def execute(
             archive_paths=len(archive.paths),
             drift_snapshots=len(snapshots),
             assertions="see pytest report",
+            **versions,
         )
     except Exception as exc:
         failed = True
-        artifacts_mod.summary(artifacts, scenario.name, "setup failed", error=str(exc))
+        artifacts_mod.summary(artifacts, scenario.name, "setup failed", error=str(exc), **versions)
         raise
     finally:
+        write_json(artifacts / "versions.json", versions)
         artifacts_mod.collect(repo_root, artifacts, scenario.stack.namespace, job_name)
         if created and not keep_cluster:
             _cleanup_owned_cluster(cluster_name, repo_root, artifacts, failed)

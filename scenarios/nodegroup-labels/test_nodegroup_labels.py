@@ -129,7 +129,6 @@ SCENARIO = ScenarioSpec(
         ],
     ),
     forwarder=ForwarderSpec(
-        cronjob_name="kubex-kubex-stack",
         job_name="nodegroup-labels-forwarder",
         window_seconds=180,
         collection=Collection(interval="minutes", interval_size=1, history=1, sample_rate=1),

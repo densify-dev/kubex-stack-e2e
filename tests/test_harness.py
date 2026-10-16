@@ -58,7 +58,8 @@ from harness.spec import (
     SpecError,
     StackSpec,
 )
-from harness.stack import resource_paths, template_args
+from harness import stack as stack_mod
+from harness.stack import forwarder_cronjob, resource_paths, template_args
 from harness.versions import COLLECTOR_IMAGE, FIXTURE_IMAGE, KIND_NODE_IMAGE, STACK_CHART_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -295,53 +296,42 @@ class CommandAndReceiverTest(unittest.TestCase):
 
 
 class HelmValuesTest(unittest.TestCase):
-    def test_pinned_defaults_reach_cluster_and_helm(self) -> None:
+    def test_node_image_is_pinned_and_chart_and_collector_default_to_latest(self) -> None:
         self.assertEqual(ClusterSpec(workers=[Node()]).node_image, KIND_NODE_IMAGE)
+        self.assertIsNone(STACK_CHART_VERSION)
+        self.assertIsNone(COLLECTOR_IMAGE)
+        _, _, args = template_args("demo", StackSpec(), ForwarderSpec())
+        self.assertNotIn("--version", args)
+        self.assertFalse(any(a.startswith("container-optimization-data-forwarder.image") for a in args))
 
-        stack = StackSpec()
-        self.assertEqual(stack.version, STACK_CHART_VERSION)
-        _, _, args = template_args("demo", stack, ForwarderSpec())
-        self.assertIn(STACK_CHART_VERSION, args)
-        self.assertIn(
-            f"container-optimization-data-forwarder.image={COLLECTOR_IMAGE}",
-            args,
+    def test_preloaded_collector_image_is_never_pulled(self) -> None:
+        _, _, args = template_args(
+            "demo", StackSpec(), ForwarderSpec(), "1.1.24", collector_image="kubex-e2e/collector:abc"
         )
-
-    def test_collector_image_can_be_overridden_or_left_to_the_chart(self) -> None:
-        custom_image = "example.test/collector:scenario"
-        _, _, custom_args = template_args(
-            "demo", StackSpec(collector_image=custom_image), ForwarderSpec()
-        )
-        self.assertIn(
-            f"container-optimization-data-forwarder.image={custom_image}",
-            custom_args,
-        )
-        self.assertNotIn(
-            f"container-optimization-data-forwarder.image={COLLECTOR_IMAGE}",
-            custom_args,
-        )
-
-        _, _, chart_args = template_args(
-            "demo", StackSpec(collector_image=None), ForwarderSpec()
-        )
-        self.assertFalse(
-            any(
-                arg.startswith("container-optimization-data-forwarder.image")
-                for arg in chart_args
-            )
-        )
+        self.assertIn("container-optimization-data-forwarder.image=kubex-e2e/collector:abc", args)
+        self.assertIn("container-optimization-data-forwarder.images.dataCollection.pullPolicy=Never", args)
 
     def test_chart_version_override_ignores_an_empty_value(self) -> None:
-        _, _, default_args = template_args(
-            "demo", StackSpec(), ForwarderSpec(), chart_version=""
-        )
-        self.assertIn(STACK_CHART_VERSION, default_args)
+        _, _, default_args = template_args("demo", StackSpec(version="1.0.0"), ForwarderSpec(), chart_version="")
+        self.assertIn("1.0.0", default_args)
 
         _, _, override_args = template_args(
-            "demo", StackSpec(), ForwarderSpec(), chart_version="2.0.0"
+            "demo", StackSpec(version="1.0.0"), ForwarderSpec(), chart_version="2.0.0"
         )
         self.assertIn("2.0.0", override_args)
-        self.assertNotIn(STACK_CHART_VERSION, override_args)
+        self.assertNotIn("1.0.0", override_args)
+
+    def test_unused_subcharts_are_disabled_by_default_and_overridable(self) -> None:
+        keys = ["kubex-connector", "kubex-ai-cdi", "kubex-automation-engine", "k8s-ephemeral-storage-metrics"]
+        _, _, args = template_args("demo", StackSpec(), ForwarderSpec())
+        for key in keys:
+            self.assertIn(f"{key}.enabled=false", args)
+        _, _, args = template_args(
+            "demo", StackSpec(helm_overrides={"kubex-connector": {"enabled": True}}), ForwarderSpec()
+        )
+        self.assertIn("kubex-connector.enabled=true", args)
+        self.assertNotIn("kubex-connector.enabled=false", args)
+        self.assertIn("kubex-ai-cdi.enabled=false", args)
 
     def test_overrides_escape_literal_segments_and_encode_lists_as_json(self) -> None:
         stack = StackSpec(
@@ -376,6 +366,148 @@ class HelmValuesTest(unittest.TestCase):
         joined = " ".join(args)
         self.assertIn("container-optimization-data-forwarder.config.collection.interval=hours", joined)
         self.assertIn("container-optimization-data-forwarder.config.collection.interval_size=2", joined)
+
+
+def _cronjob(name: str, image: str) -> str:
+    return f"""apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {name}
+spec:
+  schedule: "0 0 1 1 *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          containers:
+            - name: forwarder
+              image: "{image}"
+"""
+
+
+FORWARDER_IMAGE = "densify/container-optimization-data-forwarder:4"
+OTHER_CRONJOB = _cronjob("other", "busybox:latest")
+
+
+class ForwarderDiscoveryTest(unittest.TestCase):
+    def test_finds_the_cronjob_in_both_chart_shapes(self) -> None:
+        for name in ("kubex-kubex-stack", "kubex-stack"):  # chart 1.1.7, 1.1.23+
+            manifest = OTHER_CRONJOB + "---\n" + _cronjob(name, FORWARDER_IMAGE)
+            self.assertEqual(forwarder_cronjob(manifest), name)
+            self.assertEqual(stack_mod.forwarder_image(manifest), FORWARDER_IMAGE)
+
+    def test_zero_or_two_matches_are_errors(self) -> None:
+        with self.assertRaisesRegex(HarnessError, r"found \[\]"):
+            forwarder_cronjob(OTHER_CRONJOB)
+        two = _cronjob("a", FORWARDER_IMAGE) + "---\n" + _cronjob("b", FORWARDER_IMAGE)
+        with self.assertRaisesRegex(HarnessError, "'a'.*'b'"):
+            forwarder_cronjob(two)
+
+
+class StackInstallTest(unittest.TestCase):
+    SEARCH = json.dumps(
+        [
+            {"name": "kubex/kubex-automation-stack", "version": v}
+            for v in ("1.1.9", "1.1.23", "1.1.24", "1.2.0-beta1", "1.1.10")
+        ]
+    )
+
+    def _install(self, scenario: ScenarioSpec, **kwargs: object) -> tuple[list[list[str]], dict, str]:
+        calls: list[list[str]] = []
+
+        def fake_run(args: list[str], **_: object) -> str:
+            calls.append(args)
+            if args[:2] == ["helm", "search"]:
+                return self.SEARCH
+            if args[:2] == ["helm", "template"]:
+                return _cronjob("kubex-stack", FORWARDER_IMAGE)
+            if args[:3] == ["docker", "image", "inspect"]:
+                digest = "densify/container-optimization-data-forwarder@sha256:" + "ab" * 32
+                return json.dumps([{"RepoDigests": [digest], "Os": "linux", "Architecture": "arm64"}])
+            return ""
+
+        versions: dict = {}
+        with tempfile.TemporaryDirectory() as directory, patch.object(
+            stack_mod, "run", fake_run
+        ), patch.object(stack_mod, "kubectl"):
+            root = Path(directory)
+            cronjob = stack_mod.install(scenario, root, root, "10.0.0.1", versions=versions, **kwargs)
+        return calls, versions, cronjob
+
+    def _scenario(self, **stack: object) -> ScenarioSpec:
+        return ScenarioSpec(
+            name="demo", cluster=ClusterSpec(node_image="i", workers=[Node()]), stack=StackSpec(**stack)
+        )
+
+    def test_latest_stable_chart_is_resolved_and_always_passed(self) -> None:
+        calls, versions, cronjob = self._install(self._scenario())
+        template = [c for c in calls if c[:2] == ["helm", "template"]]
+        self.assertEqual(len(template), 2)  # default render (finds CronJob and image), then the real one
+        for args in template:
+            self.assertEqual(args[args.index("--version") + 1], "1.1.24")
+        self.assertEqual(versions["chart_version"], "1.1.24")
+        self.assertEqual(cronjob, "kubex-stack")
+
+    def test_explicit_chart_version_wins_over_search(self) -> None:
+        calls, versions, _ = self._install(self._scenario(version="1.1.9"), chart_version="1.1.10")
+        self.assertFalse(any(c[:2] == ["helm", "search"] for c in calls))
+        self.assertEqual(versions["chart_version"], "1.1.10")
+
+    def test_collector_image_override_beats_spec_beats_rendered_default(self) -> None:
+        _, versions, _ = self._install(self._scenario(collector_image="spec/img:1"), collector_image="over/img:2")
+        self.assertEqual(versions["collector_image_requested"], "over/img:2")
+        _, versions, _ = self._install(self._scenario(collector_image="spec/img:1"))
+        self.assertEqual(versions["collector_image_requested"], "spec/img:1")
+        calls, versions, _ = self._install(self._scenario())
+        self.assertEqual(versions["collector_image_requested"], FORWARDER_IMAGE)
+        self.assertEqual(sum(c[:2] == ["helm", "template"] for c in calls), 2)
+
+    def test_collector_is_preloaded_and_rendered_with_the_local_tag_and_never(self) -> None:
+        calls, versions, _ = self._install(self._scenario())
+        local = "kubex-e2e/collector:" + "ab" * 6
+        self.assertIn(["docker", "pull", FORWARDER_IMAGE], calls)
+        self.assertIn(["docker", "tag", FORWARDER_IMAGE, local], calls)
+        save = next(c for c in calls if c[:2] == ["docker", "save"])
+        self.assertEqual(save[2:4], ["--platform", "linux/arm64"])
+        self.assertEqual(save[-1], local)
+        load = next(c for c in calls if c[:3] == ["kind", "load", "image-archive"])
+        self.assertEqual(load[3:], [save[5], "--name", "kubex-e2e-demo"])
+        self.assertEqual(
+            versions["collector_image_digest"],
+            "densify/container-optimization-data-forwarder@sha256:" + "ab" * 32,
+        )
+        final = [c for c in calls if c[:2] == ["helm", "template"]][-1]
+        self.assertIn(f"container-optimization-data-forwarder.image={local}", final)
+        self.assertIn("container-optimization-data-forwarder.images.dataCollection.pullPolicy=Never", final)
+
+    def test_versions_json_and_summary_carry_all_five_fields_even_on_failure(self) -> None:
+        def partial_install(*args: object, **kwargs: object) -> str:
+            args[-1]["chart_version"] = "1.1.24"  # type: ignore[index]
+            raise HarnessError("preload failed")
+
+        scenario = ScenarioSpec(name="demo", cluster=ClusterSpec(node_image="i", workers=[Node()]))
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.object(run_mod.cluster, "assert_absent"),
+                patch.object(run_mod.cluster, "create"),
+                patch.object(run_mod.cluster, "configure_nodes"),
+                patch.object(run_mod.cluster, "delete"),
+                patch.object(run_mod.receiver, "deploy"),
+                patch.object(run_mod.receiver, "cluster_ip", return_value="1.2.3.4"),
+                patch.object(run_mod.fixtures, "deploy"),
+                patch.object(run_mod.stack, "install", partial_install),
+                patch.object(run_mod.artifacts_mod, "collect"),
+            ):
+                with self.assertRaisesRegex(HarnessError, "preload failed"):
+                    with run_mod.execute(scenario, root, root, root / "artifacts"):
+                        pass
+            versions = json.loads((root / "artifacts" / "demo" / "versions.json").read_text())
+            summary = (root / "artifacts" / "demo" / "summary.md").read_text()
+        self.assertEqual(set(versions), set(run_mod.VERSION_FIELDS))
+        self.assertEqual(versions["chart_version"], "1.1.24")
+        for field in run_mod.VERSION_FIELDS:
+            self.assertIn(field.replace("_", " ").capitalize(), summary)
 
 
 class SpecValidationTest(unittest.TestCase):
