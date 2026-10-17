@@ -222,6 +222,13 @@ def job_image_id(job: str, namespace: str, repo_root: Path) -> str:
     ).strip()
 
 
+def job_failures(job: str, namespace: str, repo_root: Path) -> int:
+    """Failed pod attempts of the Job; empty status.failed means none."""
+
+    raw = kubectl(["get", "job", job, "-n", namespace, "-o", "jsonpath={.status.failed}"], repo_root)
+    return int(raw.strip() or 0)
+
+
 def resource_paths(scenario: ScenarioSpec, scenario_dir: Path) -> list[Path]:
     """Resolve scenario manifests and fail before provisioning on path mistakes."""
 

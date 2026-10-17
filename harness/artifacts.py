@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
+from typing import Sequence
 
 from harness.command import kubectl, kubectl_json, write
 
@@ -74,8 +75,18 @@ def collect(repo_root: Path, artifacts: Path, namespace: str, job: str | None) -
         write(logs / "collection-error.txt", f"pod log discovery failed: {exc}\n")
 
 
-def summary(artifacts: Path, scenario_name: str, status: str, **details: object) -> None:
+def summary(
+    artifacts: Path,
+    scenario_name: str,
+    status: str,
+    coverage_warnings: Sequence[str] | None = None,
+    **details: object,
+) -> None:
     lines = [f"# Scenario {scenario_name}", "", f"**Status:** {status}"]
     lines.extend(f"**{key.replace('_', ' ').capitalize()}:** {value}" for key, value in details.items())
     lines.append("")
+    if coverage_warnings is not None:
+        lines.extend(["## Coverage warnings", ""])
+        lines.extend([f"- {w}" for w in coverage_warnings] or ["none"])
+        lines.append("")
     write(artifacts / "summary.md", "\n".join(lines))

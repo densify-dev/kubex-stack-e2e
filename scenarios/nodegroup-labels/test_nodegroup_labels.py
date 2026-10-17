@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from harness.archive import assert_distinct, assert_headers, assert_paths, assert_unique_keys
+from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.spec import (
     ClusterSpec,
     Collection,

@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 
 from harness.command import HarnessError, kubectl_json
 
@@ -57,25 +57,41 @@ def quantity(value: object, where: str) -> Decimal:
         raise HarnessError(f"{where}: invalid Kubernetes quantity {value!r}") from exc
 
 
+DEFAULT_RESOURCES = ("nodes", "pods")
+_CLUSTER_SCOPED = {"nodes"}
+
+
 @dataclass(frozen=True)
 class Snapshot:
+    """Raw kubectl items as captured. ``other`` holds later object kinds keyed by resource name."""
+
     label: str
     nodes: list[dict[str, Any]]
     pods: list[dict[str, Any]]
+    other: Mapping[str, list[dict[str, Any]]] = field(default_factory=dict)
+
+    @property
+    def items(self) -> dict[str, list[dict[str, Any]]]:
+        return {"nodes": self.nodes, "pods": self.pods, **self.other}
+
+    @classmethod
+    def from_items(cls, label: str, items: Mapping[str, list[dict[str, Any]]]) -> "Snapshot":
+        extra = {k: v for k, v in items.items() if k not in ("nodes", "pods")}
+        return cls(label, items["nodes"], items["pods"], extra)
 
 
-def take_snapshot(label: str, repo_root: Path) -> Snapshot:
+def take_snapshot(label: str, repo_root: Path, resources: Sequence[str] = DEFAULT_RESOURCES) -> Snapshot:
     payloads: dict[str, list[dict[str, Any]]] = {}
-    for resource in ("nodes", "pods"):
+    for resource in resources:
         args = ["get", resource, "-o", "json"]
-        if resource == "pods":
+        if resource not in _CLUSTER_SCOPED:
             args.insert(1, "-A")
         payload = kubectl_json(args, repo_root)
         items = payload.get("items") if isinstance(payload, dict) else None
         if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
             raise HarnessError(f"kubectl returned invalid {resource} item list")
         payloads[resource] = items
-    return Snapshot(label=label, nodes=payloads["nodes"], pods=payloads["pods"])
+    return Snapshot.from_items(label, payloads)
 
 
 def _container_request(container: dict[str, Any], resource: str, where: str) -> Decimal:

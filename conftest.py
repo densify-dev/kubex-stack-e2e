@@ -8,6 +8,7 @@ modules never provision anything at import time.
 
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -15,11 +16,15 @@ from typing import Iterator
 import pytest
 
 from harness.archive import Archive
+from harness.coverage import workflow_warning
 from harness.oracle import Oracle
-from harness.run import Run, execute
+from harness.run import Run, execute, replay
 from harness.spec import ScenarioSpec
 
 REPO_ROOT = Path(__file__).parent.resolve()
+
+# Collected from every Run at session end; printed as one CI annotation by pytest_terminal_summary.
+COVERAGE_WARNINGS: list[str] = []
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -30,12 +35,22 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         help="override the collector image (empty = scenario spec, else the chart default)",
     )
+    group.addoption(
+        "--replay",
+        default=None,
+        help="artifact directory of a previous run (needs snapshots.json, replay.json, extracted-csv/); no cluster is touched",
+    )
     group.addoption("--keep-cluster", action="store_true", help="leave the Kind cluster running")
     group.addoption(
         "--artifacts-root",
         default="artifacts/kind-functional",
         help="directory for per-scenario artifacts",
     )
+
+
+def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
+    if os.environ.get("GITHUB_ACTIONS") == "true" and COVERAGE_WARNINGS:
+        terminalreporter.write_line(workflow_warning(COVERAGE_WARNINGS))
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -49,16 +64,22 @@ def repo_root() -> Path:
 
 
 @pytest.fixture(scope="session")
-def stack_run(pytestconfig: pytest.Config, repo_root: Path):
+def stack_run(pytestconfig: pytest.Config, repo_root: Path, tmp_path_factory: pytest.TempPathFactory):
     """Factory yielding a provisioned :class:`Run` for a scenario spec."""
 
     artifacts_root = (repo_root / str(pytestconfig.getoption("artifacts_root"))).resolve()
     chart_version = pytestconfig.getoption("stack_chart_version")
     collector_image = pytestconfig.getoption("collector_image") or None
     keep_cluster = bool(pytestconfig.getoption("keep_cluster"))
+    replay_dir = pytestconfig.getoption("replay")
 
     @contextmanager
     def _run(scenario: ScenarioSpec, scenario_dir: Path) -> Iterator[Run]:
+        if replay_dir:
+            active = replay(scenario, Path(replay_dir).resolve(), tmp_path_factory.mktemp("replay"))
+            yield active
+            COVERAGE_WARNINGS.extend(active.coverage_warnings)
+            return
         with execute(
             scenario,
             scenario_dir,
@@ -69,6 +90,7 @@ def stack_run(pytestconfig: pytest.Config, repo_root: Path):
             keep_cluster,
         ) as active:
             yield active
+            COVERAGE_WARNINGS.extend(active.coverage_warnings)
 
     return _run
 
