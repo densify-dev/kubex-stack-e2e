@@ -761,11 +761,11 @@ class OracleTest(unittest.TestCase):
     NODES = [
         {
             "metadata": {"name": "worker-a", "labels": {"group": "workers", "enabled": "true"}},
-            "status": {"allocatable": {"cpu": "2", "memory": "1Gi"}},
+            "status": {"allocatable": {"cpu": "2", "memory": "1Gi"}, "capacity": {"cpu": "4", "memory": "2Gi"}},
         },
         {
             "metadata": {"name": "worker-b", "labels": {"group": "workers"}},
-            "status": {"allocatable": {"cpu": "2", "memory": "1Gi"}},
+            "status": {"allocatable": {"cpu": "2", "memory": "1Gi"}, "capacity": {"cpu": "4", "memory": "2Gi"}},
         },
         {
             "metadata": {"name": "control-plane", "labels": {"group": "system"}},
@@ -778,14 +778,26 @@ class OracleTest(unittest.TestCase):
             "spec": {
                 "nodeName": "worker-a",
                 "containers": [
-                    {"name": "app", "resources": {"requests": {"cpu": "200m", "memory": "64Mi"}}},
-                    {"name": "finished", "resources": {"requests": {"cpu": "5", "memory": "5Gi"}}},
+                    {
+                        "name": "app",
+                        "resources": {
+                            "requests": {"cpu": "200m", "memory": "64Mi"},
+                            "limits": {"cpu": "500m", "memory": "128Mi"},
+                        },
+                    },
+                    {
+                        "name": "finished",
+                        "resources": {"requests": {"cpu": "5", "memory": "5Gi"}, "limits": {"cpu": "6"}},
+                    },
                 ],
                 "initContainers": [
                     {
                         "name": "sidecar",
                         "restartPolicy": "Always",
-                        "resources": {"requests": {"cpu": "50m", "memory": "16Mi"}},
+                        "resources": {
+                            "requests": {"cpu": "50m", "memory": "16Mi"},
+                            "limits": {"cpu": "100m", "memory": "32Mi"},
+                        },
                     },
                     {"name": "init", "resources": {"requests": {"cpu": "5", "memory": "5Gi"}}},
                 ],
@@ -799,7 +811,10 @@ class OracleTest(unittest.TestCase):
             "metadata": {"name": "kindnet"},
             "spec": {
                 "nodeName": "worker-b",
-                "containers": [{"name": "kindnet", "resources": {"requests": {"cpu": "100m", "memory": "50Mi"}}}],
+                "containers": [{
+                        "name": "kindnet",
+                        "resources": {"requests": {"cpu": "100m", "memory": "50Mi"}, "limits": {"cpu": "200m"}},
+                    }],
             },
             "status": {"phase": "Running"},
         },
@@ -825,6 +840,18 @@ class OracleTest(unittest.TestCase):
         self.assertEqual(oracle.evidence[0]["allocatable"], 4.0)
         self.assertEqual(oracle.evidence[0]["unit"], "cores")
 
+    def test_limits_use_the_same_filtering_as_requests(self) -> None:
+        oracle = self._oracle()
+        self.assertAlmostEqual(oracle.limits("cpu", {"group": "workers"}), 0.8)
+        self.assertEqual(oracle.limits("memory", {"group": "workers"}), 160 * 1024**2)
+        self.assertEqual(oracle.evidence[0]["limits"], 0.8)
+
+    def test_capacity_and_pod_count(self) -> None:
+        oracle = self._oracle()
+        self.assertEqual(oracle.capacity("cpu", {"group": "workers"}), 8.0)
+        self.assertEqual(oracle.capacity("memory", {"group": "workers"}), 4 * 1024**3)
+        self.assertEqual(oracle.pod_count({"group": "workers"}), 2)
+
     def test_boolean_label_selectors_compare_as_text(self) -> None:
         self.assertAlmostEqual(self._oracle().requests("cpu", {"enabled": True}), 0.25)
 
@@ -849,6 +876,20 @@ class OracleTest(unittest.TestCase):
         )
         with self.assertRaisesRegex(OracleDrift, "requests changed from 0.35 at window start"):
             oracle.requests("cpu", {"group": "workers"})
+
+    def test_limit_and_pod_count_drift_are_detected(self) -> None:
+        kindnet = self.PODS[1]
+        raised = {
+            **kindnet,
+            "spec": {**kindnet["spec"], "containers": [{"name": "kindnet", "resources": {"limits": {"cpu": "300m"}}}]},
+        }
+        start = Snapshot("window start", self.NODES, self.PODS)
+        oracle = self._oracle(start, Snapshot("window end", self.NODES, [self.PODS[0], raised]))
+        with self.assertRaisesRegex(OracleDrift, "limits changed from 0.8 at window start"):
+            oracle.limits("cpu", {"group": "workers"})
+        oracle = self._oracle(start, Snapshot("window end", self.NODES, self.PODS[:1]))
+        with self.assertRaisesRegex(OracleDrift, "pod_count.*changed from 2"):
+            oracle.pod_count({"group": "workers"})
 
     def test_drift_can_be_allowed_for_a_scenario_that_mutates_on_purpose(self) -> None:
         moved = [

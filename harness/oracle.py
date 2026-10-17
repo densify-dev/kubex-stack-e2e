@@ -1,7 +1,7 @@
 """Cluster-truth expectations computed independently from live Kubernetes state.
 
-Valid only for spec-derived step functions — requests, allocatable, and the
-reservation percentages derived from them. Kubernetes has no opinion about usage,
+Valid only for spec-derived step functions — requests, limits, node capacity and
+allocatable, the reservation percentages derived from them, and pod counts. Kubernetes has no opinion about usage,
 throttling, or working set, so those metrics have no oracle here and belong to
 fixture-truth or observed invariants instead.
 
@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from harness.command import HarnessError, kubectl_json
 
@@ -94,14 +94,14 @@ def take_snapshot(label: str, repo_root: Path, resources: Sequence[str] = DEFAUL
     return Snapshot.from_items(label, payloads)
 
 
-def _container_request(container: dict[str, Any], resource: str, where: str) -> Decimal:
+def _container_amount(container: dict[str, Any], kind: str, resource: str, where: str) -> Decimal:
     resources = container.get("resources", {})
-    requests = resources.get("requests", {}) if isinstance(resources, dict) else {}
-    value = requests.get(resource) if isinstance(requests, dict) else None
+    amounts = resources.get(kind, {}) if isinstance(resources, dict) else {}
+    value = amounts.get(resource) if isinstance(amounts, dict) else None
     return Decimal(0) if value in {None, ""} else quantity(value, where)
 
 
-def _compute(snapshot: Snapshot, selector: Mapping[str, str], resource: str) -> dict[str, Any]:
+def _select_nodes(snapshot: Snapshot, selector: Mapping[str, str]) -> tuple[list[dict[str, Any]], set[str]]:
     wanted = {k: str(v).lower() if isinstance(v, bool) else str(v) for k, v in selector.items()}
     nodes = [
         node
@@ -111,14 +111,19 @@ def _compute(snapshot: Snapshot, selector: Mapping[str, str], resource: str) -> 
     names = {str(node.get("metadata", {}).get("name", "")) for node in nodes} - {""}
     if not names:
         raise HarnessError(f"Kubernetes oracle node selector {dict(selector)!r} matched no nodes")
+    return nodes, names
 
-    requests = Decimal(0)
+
+def _live_containers(snapshot: Snapshot, names: set[str]) -> Iterator[tuple[tuple[str, str], dict[str, Any], str]]:
+    """((namespace, name), container, description) for every live container of a Running pod on ``names``."""
+
     for pod in snapshot.pods:
         spec = pod.get("spec", {})
         status = pod.get("status", {})
         if spec.get("nodeName") not in names or status.get("phase") != "Running":
             continue
         pod_name = pod.get("metadata", {}).get("name", "<unknown>")
+        pod_id = (pod.get("metadata", {}).get("namespace", ""), pod_name)
         terminated = {
             item.get("name")
             for item in status.get("containerStatuses", [])
@@ -126,8 +131,7 @@ def _compute(snapshot: Snapshot, selector: Mapping[str, str], resource: str) -> 
         }
         for container in spec.get("containers", []):
             if isinstance(container, dict) and container.get("name") not in terminated:
-                where = f"pod {pod_name} container {container.get('name', '<unknown>')}"
-                requests += _container_request(container, resource, where)
+                yield pod_id, container, f"pod {pod_name} container {container.get('name', '<unknown>')}"
         terminated_init = {
             item.get("name")
             for item in status.get("initContainerStatuses", [])
@@ -141,26 +145,49 @@ def _compute(snapshot: Snapshot, selector: Mapping[str, str], resource: str) -> 
                 and container.get("restartPolicy") == "Always"
                 and container.get("name") not in terminated_init
             ):
-                where = f"pod {pod_name} init container {container.get('name', '<unknown>')}"
-                requests += _container_request(container, resource, where)
+                yield pod_id, container, f"pod {pod_name} init container {container.get('name', '<unknown>')}"
 
-    allocatable = sum(
-        (
-            quantity(
-                node.get("status", {}).get("allocatable", {}).get(resource),
-                f"node {node.get('metadata', {}).get('name', '<unknown>')} allocatable {resource}",
-            )
-            for node in nodes
-        ),
-        Decimal(0),
+
+def _node_total(nodes: list[dict[str, Any]], field_name: str, resource: str) -> float:
+    return float(
+        sum(
+            (
+                quantity(
+                    node.get("status", {}).get(field_name, {}).get(resource),
+                    f"node {node.get('metadata', {}).get('name', '<unknown>')} {field_name} {resource}",
+                )
+                for node in nodes
+            ),
+            Decimal(0),
+        )
     )
+
+
+def _compute(snapshot: Snapshot, selector: Mapping[str, str], resource: str, kind: str) -> dict[str, Any]:
+    """``kind`` is ``requests`` or ``limits`` (summed over live containers) or ``capacity`` (node status)."""
+
+    nodes, names = _select_nodes(snapshot, selector)
+    if kind == "capacity":
+        total = _node_total(nodes, "capacity", resource)
+    else:
+        total = float(
+            sum(
+                (_container_amount(c, kind, resource, where) for _, c, where in _live_containers(snapshot, names)),
+                Decimal(0),
+            )
+        )
     return {
         "nodes": sorted(names),
-        "requests": float(requests),
-        "allocatable": float(allocatable),
+        kind: total,
+        "allocatable": _node_total(nodes, "allocatable", resource),
         "resource": resource,
         "unit": "cores" if resource == "cpu" else "bytes",
     }
+
+
+def _compute_pod_count(snapshot: Snapshot, selector: Mapping[str, str]) -> dict[str, Any]:
+    _, names = _select_nodes(snapshot, selector)
+    return {"nodes": sorted(names), "pod_count": len({pod for pod, _, _ in _live_containers(snapshot, names)})}
 
 
 @dataclass
@@ -176,28 +203,46 @@ class Oracle:
 
     def _query(
         self,
-        selector: Mapping[str, str],
-        resource: str,
-        calculation: str,
+        description: str,
+        compute: Callable[[Snapshot], dict[str, Any]],
+        fields: Sequence[str],
         allow_drift: bool,
-    ) -> float:
-        computed = [(s.label, _compute(s, selector, resource)) for s in self.snapshots]
+    ) -> dict[str, Any]:
+        computed = [(s.label, compute(s)) for s in self.snapshots]
         baseline_label, baseline = computed[0]
         if not allow_drift:
             for label, other in computed[1:]:
-                for field_name in ("nodes", "requests", "allocatable"):
+                for field_name in fields:
                     if baseline[field_name] != other[field_name]:
                         raise OracleDrift(
-                            f"cluster oracle for {calculation}({resource}, {dict(selector)!r}) drifted: "
+                            f"cluster oracle for {description} drifted: "
                             f"{field_name} changed from {baseline[field_name]!r} at {baseline_label} "
                             f"to {other[field_name]!r} at {label}"
                         )
-        if calculation == "requests":
-            expected = baseline["requests"]
-        else:
+        return baseline
+
+    def _amount(
+        self, selector: Mapping[str, str], resource: str, calculation: str, allow_drift: bool
+    ) -> float:
+        kind = calculation if calculation in ("requests", "limits", "capacity") else "requests"
+        baseline = self._query(
+            f"{calculation}({resource}, {dict(selector)!r})",
+            lambda s: _compute(s, selector, resource, kind),
+            ("nodes", kind, "allocatable"),
+            allow_drift,
+        )
+        if calculation == "reservation_percent":
             if baseline["allocatable"] <= 0:
                 raise HarnessError(f"no allocatable {resource} for nodes {baseline['nodes']!r}")
             expected = 100.0 * baseline["requests"] / baseline["allocatable"]
+        else:
+            expected = baseline[kind]
+        self._record(calculation, selector, expected, allow_drift, baseline)
+        return expected
+
+    def _record(
+        self, calculation: str, selector: Mapping[str, str], expected: float, allow_drift: bool, baseline: dict[str, Any]
+    ) -> None:
         self.evidence.append(
             {
                 "calculation": calculation,
@@ -207,16 +252,37 @@ class Oracle:
                 **baseline,
             }
         )
-        return expected
 
     def requests(self, resource: str, selector: Mapping[str, str], *, allow_drift: bool = False) -> float:
         """Total requested ``resource`` across pods on nodes matching ``selector``."""
 
-        return self._query(selector, resource, "requests", allow_drift)
+        return self._amount(selector, resource, "requests", allow_drift)
+
+    def limits(self, resource: str, selector: Mapping[str, str], *, allow_drift: bool = False) -> float:
+        """Total ``resource`` limit across pods on nodes matching ``selector`` (same filtering as requests)."""
+
+        return self._amount(selector, resource, "limits", allow_drift)
+
+    def capacity(self, resource: str, selector: Mapping[str, str], *, allow_drift: bool = False) -> float:
+        """Total node ``status.capacity`` of ``resource`` across nodes matching ``selector``."""
+
+        return self._amount(selector, resource, "capacity", allow_drift)
 
     def reservation_percent(
         self, resource: str, selector: Mapping[str, str], *, allow_drift: bool = False
     ) -> float:
         """Aggregate requests as a percentage of aggregate allocatable."""
 
-        return self._query(selector, resource, "reservation_percent", allow_drift)
+        return self._amount(selector, resource, "reservation_percent", allow_drift)
+
+    def pod_count(self, selector: Mapping[str, str], *, allow_drift: bool = False) -> int:
+        """Running pods on nodes matching ``selector`` with at least one live container or native sidecar."""
+
+        baseline = self._query(
+            f"pod_count({dict(selector)!r})",
+            lambda s: _compute_pod_count(s, selector),
+            ("nodes", "pod_count"),
+            allow_drift,
+        )
+        self._record("pod_count", selector, baseline["pod_count"], allow_drift, baseline)
+        return baseline["pod_count"]

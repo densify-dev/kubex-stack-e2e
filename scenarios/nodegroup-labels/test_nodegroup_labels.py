@@ -2,8 +2,8 @@
 
 Two ordinary Kind workers share one configured node-group label and one label the
 collector is not configured to group on. The collector must produce exactly one
-node group, containing both workers, with requests and reservation percentages
-matching what Kubernetes itself reports.
+node group, containing both workers, with requests, limits, capacity and reservation
+percentages matching what Kubernetes itself reports.
 """
 
 from __future__ import annotations
@@ -12,18 +12,22 @@ from pathlib import Path
 
 import pytest
 
-from harness.archive import assert_distinct, assert_headers, assert_paths, assert_unique_keys
+from harness.archive import (
+    assert_distinct,
+    assert_headers,
+    assert_metric_grid,
+    assert_paths,
+    assert_unique_keys,
+    expected_timestamps,
+)
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.spec import (
     ClusterSpec,
     Collection,
-    FixtureService,
     ForwarderSpec,
-    Metric,
     Node,
     PrometheusQuery,
     PrometheusSpec,
-    PrometheusTarget,
     ScenarioSpec,
     StackSpec,
     Wait,
@@ -33,11 +37,13 @@ HERE = Path(__file__).parent
 NODE_GROUP = {"topology.kubex.ai/node-group": "mvp-workers"}
 WORKLOAD_NAMESPACE = "nodegroup-labels-workload"
 
-# Rounding: the collector writes six decimal places, so the worst case error on a
-# raw value is 5e-7. Memory is in bytes, where sub-byte precision is meaningless.
-CPU_TOLERANCE = 1e-6
-MEMORY_TOLERANCE = 1.0
+# Units and rounding: the collector writes time-series values with %f (six decimal
+# places), so the worst case error on a raw value is 5e-7. CPU is in cores. Memory is
+# in MiB (as in the node and container files), so bytes from Kubernetes are divided by
+# 2**20 before comparing. Percentages are compared to two decimals.
+VALUE_TOLERANCE = 1e-6
 PERCENT_TOLERANCE = 0.01
+MIB = 2**20
 
 _SYSTEM_NODE = {"stack-e2e-system": "system"}
 _CONTROL_PLANE_TOLERATION = [
@@ -83,30 +89,8 @@ SCENARIO = ScenarioSpec(
             },
         },
     ),
-    fixtures=[
-        FixtureService(
-            name="kubex-dcgm-fixture",
-            port=9100,
-            target_port=9100,
-            metrics=[
-                Metric(
-                    name="DCGM_FI_DEV_GPU_UTIL",
-                    type="gauge",
-                    help="Deterministic zero GPU utilization fixture.",
-                    labels={"gpu": "0", "UUID": "MVP-DCGM-0"},
-                    value=0,
-                )
-            ],
-        )
-    ],
     prometheus=PrometheusSpec(
-        targets=[PrometheusTarget(name="kubex-dcgm-fixture", service="kubex-dcgm-fixture")],
         queries=[
-            PrometheusQuery("fixture-up", 'up{service="kubex-dcgm-fixture"}'),
-            PrometheusQuery(
-                "retained-fixture-gauge",
-                'DCGM_FI_DEV_GPU_UTIL{service="kubex-dcgm-fixture",gpu="0"}',
-            ),
             PrometheusQuery(
                 "mvp-worker-labels",
                 'kube_node_labels{label_topology_kubex_ai_node_group="mvp-workers"}',
@@ -125,6 +109,16 @@ SCENARIO = ScenarioSpec(
             PrometheusQuery(
                 "workload-memory-requests",
                 f'kube_pod_container_resource_requests{{namespace="{WORKLOAD_NAMESPACE}",resource="memory"}}',
+                min_results=2,
+            ),
+            PrometheusQuery(
+                "workload-cpu-limits",
+                f'kube_pod_container_resource_limits{{namespace="{WORKLOAD_NAMESPACE}",resource="cpu"}}',
+                min_results=2,
+            ),
+            PrometheusQuery(
+                "workload-memory-limits",
+                f'kube_pod_container_resource_limits{{namespace="{WORKLOAD_NAMESPACE}",resource="memory"}}',
                 min_results=2,
             ),
         ],
@@ -148,6 +142,9 @@ TIME_SERIES = [
     "node_group/memory_reservation_percent.csv",
 ]
 ENTITY_TABLES = ["node_group/config.csv", "node_group/attributes.csv"]
+KEYS = ["ClusterName", "NodeGroupName"]
+IDENTITIES = [("nodegroup-labels", "mvp-workers")]
+ROW = {"ClusterName": "nodegroup-labels", "NodeGroupName": "mvp-workers"}
 
 pytestmark = pytest.mark.pr
 
@@ -182,12 +179,16 @@ def test_entity_tables_hold_exactly_one_row(archive, path):
 
 
 @pytest.mark.parametrize("path", TIME_SERIES)
-def test_time_series_have_samples_with_unique_timestamps(archive, path):
-    """Sample count varies with how the window lines up with interval boundaries."""
+def test_time_series_follow_the_collector_grid(archive, path):
+    """One identity, with exactly the MetricTime grid the collector derives from AuditTime."""
 
-    table = archive.csv(path)
-    assert len(table) >= 1, f"{path}: expected at least one sample"
-    assert_unique_keys(table, ["ClusterName", "NodeGroupName", "MetricTime"])
+    audit_time = archive.csv("node_group/config.csv").one(**ROW)["AuditTime"]
+    assert_metric_grid(
+        archive.csv(path),
+        KEYS,
+        IDENTITIES,
+        expected_timestamps(audit_time, SCENARIO.forwarder.collection),
+    )
 
 
 def test_config_headers(archive):
@@ -245,18 +246,14 @@ def test_time_series_headers(archive, path, metric_column):
 
 
 def test_both_workers_are_in_the_group(archive):
-    row = archive.csv("node_group/attributes.csv").one(
-        ClusterName="nodegroup-labels", NodeGroupName="mvp-workers"
-    )
+    row = archive.csv("node_group/attributes.csv").one(**ROW)
     expected = sorted(SCENARIO.cluster.node_names(SCENARIO.cluster_name)[1:])
     assert sorted(row["CurrentNodes"].split("|")) == expected
     assert float(row["CurrentSize"]) == pytest.approx(2)
 
 
 def test_attributes_describe_a_node_group(archive):
-    row = archive.csv("node_group/attributes.csv").one(
-        ClusterName="nodegroup-labels", NodeGroupName="mvp-workers"
-    )
+    row = archive.csv("node_group/attributes.csv").one(**ROW)
     assert row["VirtualTechnology"] == "NodeGroup"
     assert row["VirtualDomain"] == "nodegroup-labels"
 
@@ -272,16 +269,16 @@ def test_current_size_holds_for_every_sample(archive):
 
 
 @pytest.mark.parametrize(
-    "path,column,resource,tolerance",
+    "path,column,resource,divisor",
     [
-        ("node_group/cpu_requests.csv", "CpuRequests", "cpu", CPU_TOLERANCE),
-        ("node_group/memory_requests.csv", "MemoryRequests", "memory", MEMORY_TOLERANCE),
+        ("node_group/cpu_requests.csv", "CpuRequests", "cpu", 1),
+        ("node_group/memory_requests.csv", "MemoryRequests", "memory", MIB),
     ],
 )
-def test_requests_match_the_cluster(archive, oracle, path, column, resource, tolerance):
-    expected = oracle.requests(resource, NODE_GROUP)
+def test_requests_match_the_cluster(archive, oracle, path, column, resource, divisor):
+    expected = oracle.requests(resource, NODE_GROUP) / divisor
     for row in archive.csv(path):
-        assert float(row[column]) == pytest.approx(expected, abs=tolerance), (
+        assert float(row[column]) == pytest.approx(expected, abs=VALUE_TOLERANCE), (
             f"{path} at {row['MetricTime']}"
         )
 
@@ -299,3 +296,48 @@ def test_reservation_percent_matches_the_cluster(archive, oracle, path, column, 
         assert float(row[column]) == pytest.approx(expected, abs=PERCENT_TOLERANCE), (
             f"{path} at {row['MetricTime']}"
         )
+
+
+# --- node_group/attributes.csv: whole numbers, CPU in mcores and memory in MiB ----
+# The collector reads the last sample of each query and truncates it with Go's int(),
+# so the expectation truncates too (internal/nodegroup/nodegroup.go:58).
+
+
+def _attribute(archive, column):
+    return int(archive.csv("node_group/attributes.csv").one(**ROW)[column])
+
+
+def test_attribute_cpu_request(archive, oracle):
+    assert _attribute(archive, "CpuRequest") == int(oracle.requests("cpu", NODE_GROUP) * 1000)
+
+
+def test_attribute_memory_request(archive, oracle):
+    assert _attribute(archive, "MemoryRequest") == int(oracle.requests("memory", NODE_GROUP) / MIB)
+
+
+def test_attribute_cpu_limit(archive, oracle):
+    assert _attribute(archive, "CpuLimit") == int(oracle.limits("cpu", NODE_GROUP) * 1000)
+
+
+def test_attribute_memory_limit(archive, oracle):
+    assert _attribute(archive, "MemoryLimit") == int(oracle.limits("memory", NODE_GROUP) / MIB)
+
+
+# --- node_group/config.csv ---------------------------------------------------
+# HwTotalMemory is not asserted: its unit (bytes here, MiB in node/config.csv) is
+# pending SME #9.
+
+
+def test_config_total_cpus(archive, oracle):
+    row = archive.csv("node_group/config.csv").one(**ROW)
+    assert int(row["HwTotalCpus"]) == int(oracle.capacity("cpu", NODE_GROUP))
+
+
+def test_config_os_name(archive, oracle):
+    systems = {
+        node["status"]["nodeInfo"]["operatingSystem"]
+        for node in oracle.primary.nodes
+        if NODE_GROUP.items() <= node["metadata"]["labels"].items()
+    }
+    assert len(systems) == 1, f"node group members report several operating systems: {sorted(systems)!r}"
+    assert archive.csv("node_group/config.csv").one(**ROW)["OsName"] == systems.pop()
