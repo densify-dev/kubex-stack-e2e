@@ -106,3 +106,39 @@ def summary(
     if coverage_warnings is not None:
         lines += ["## Coverage warnings", "", *([f"- {w}" for w in coverage_warnings] or ["none"]), ""]
     write(artifacts / "summary.md", "\n".join(lines))
+
+
+def _command_escape(value: str, *, property_value: bool = False) -> str:
+    value = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+    return value.replace(":", "%3A").replace(",", "%2C") if property_value else value
+
+
+def failure_digest(failures: Sequence[tuple[str, str, int, str]], shown: int = 5) -> tuple[str, list[str]]:
+    """Markdown table and GitHub ``::error`` annotations for (test, file, line, message) failures.
+
+    Failures with the same message share one row and one annotation, so a broken fixture is one
+    entry, not forty. Each entry points at its first test.
+    """
+
+    grouped: dict[str, list[tuple[str, str, int]]] = {}
+    for test, file, line, message in failures:
+        grouped.setdefault(message, []).append((test, file, line))
+
+    def cell(value: str) -> str:
+        return value.replace("|", "\\|")
+
+    def names(tests: list[tuple[str, str, int]]) -> list[str]:
+        more = [f"and {len(tests) - shown} more"] if len(tests) > shown else []
+        return [test for test, _, _ in tests[:shown]] + more
+
+    rows, annotations = [], []
+    for message, tests in grouped.items():
+        _, file, line = tests[0]
+        listed = names(tests)
+        rows.append(f"| {'<br>'.join(cell(name) for name in listed)} | {cell(message)} | `{file}:{line}` |")
+        annotations.append(
+            f"::error file={_command_escape(file, property_value=True)},line={line},"
+            f"title={_command_escape(', '.join(listed), property_value=True)}::{_command_escape(message)}"
+        )
+    table = ["## Failed tests", "", f"{len(failures)} failed.", "", "| Test | Failure | Where |", "| --- | --- | --- |", *rows]
+    return "\n".join(table) + "\n\n", annotations

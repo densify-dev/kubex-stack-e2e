@@ -250,6 +250,27 @@ class CommandAndReceiverTest(unittest.TestCase):
                 "pod output\n",
             )
 
+    def test_failure_digest_groups_by_message_and_escapes(self) -> None:
+        table, annotations = artifacts_mod.failure_digest(
+            [
+                ("test_os[a]", "s/t.py", 10, "assert '' == 'linux'"),
+                ("test_os[b]", "s/t.py", 10, "assert '' == 'linux'"),
+                ("test_os[c]", "s/t.py", 10, "assert '' == 'linux'"),
+                ("test_cpu", "s/t.py", 20, "assert 1 == 2 | 100%"),
+            ],
+            shown=2,
+        )
+        self.assertIn("4 failed.", table)
+        self.assertIn("| test_os[a]<br>test_os[b]<br>and 1 more | assert '' == 'linux' | `s/t.py:10` |", table)
+        self.assertIn("| test_cpu | assert 1 == 2 \\| 100% | `s/t.py:20` |", table)
+        self.assertEqual(
+            annotations,
+            [
+                "::error file=s/t.py,line=10,title=test_os[a]%2C test_os[b]%2C and 1 more::assert '' == 'linux'",
+                "::error file=s/t.py,line=20,title=test_cpu::assert 1 == 2 | 100%25",
+            ],
+        )
+
     def test_prometheus_reconnects_and_stops_forward(self) -> None:
         from harness.prometheus import await_ready
         from harness.spec import PrometheusSpec

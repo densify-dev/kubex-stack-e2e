@@ -16,6 +16,7 @@ from typing import Iterator
 import pytest
 
 from harness.archive import Archive
+from harness.artifacts import failure_digest
 from harness.coverage import workflow_warning
 from harness.oracle import Oracle
 from harness.run import Run, execute, replay
@@ -48,9 +49,31 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def _failure(report: pytest.TestReport, rootpath: Path) -> tuple[str, str, int, str]:
+    crash = getattr(report.longrepr, "reprcrash", None)
+    # A custom assert message comes first and pytest's comparison follows it, so keep both on one line.
+    message = " ".join((crash.message if crash else str(report.longrepr)).split())[:300]
+    location, line, _ = report.location
+    # Relative to the repository, not pytest's rootdir, which path-like option values can move.
+    path = os.path.relpath(rootpath / location, REPO_ROOT)
+    test = report.nodeid.split("::", 1)[-1] + ("" if report.when == "call" else f" ({report.when})")
+    return test, path, (line or 0) + 1, message
+
+
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    if os.environ.get("GITHUB_ACTIONS") == "true" and COVERAGE_WARNINGS:
+    if os.environ.get("GITHUB_ACTIONS") != "true":
+        return
+    if COVERAGE_WARNINGS:
         terminalreporter.write_line(workflow_warning(COVERAGE_WARNINGS))
+    reports = [r for kind in ("failed", "error") for r in terminalreporter.stats.get(kind, [])]
+    failures = [_failure(r, terminalreporter.config.rootpath) for r in reports]
+    if failures:
+        table, annotations = failure_digest(failures)
+        for annotation in annotations:
+            terminalreporter.write_line(annotation)
+        if summary_path := os.environ.get("GITHUB_STEP_SUMMARY"):
+            with open(summary_path, "a", encoding="utf-8") as summary_file:
+                summary_file.write(table)
 
 
 def pytest_configure(config: pytest.Config) -> None:
