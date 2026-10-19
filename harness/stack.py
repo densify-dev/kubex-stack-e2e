@@ -92,6 +92,16 @@ def forwarder_image(manifest: str) -> str:
     return _forwarder(manifest)[1]
 
 
+def _assert_runs_image(manifest: str, cronjob: str, image: str) -> None:
+    for doc in yaml.safe_load_all(manifest):
+        if isinstance(doc, dict) and doc.get("kind") == "CronJob" and doc["metadata"]["name"] == cronjob:
+            containers = doc["spec"]["jobTemplate"]["spec"]["template"]["spec"]["containers"]
+            if any(c.get("image") == image and c.get("imagePullPolicy") == "Never" for c in containers):
+                return
+            raise HarnessError(f"CronJob {cronjob} does not run {image} with pull policy Never: {containers}")
+    raise HarnessError(f"CronJob {cronjob} missing from the final render")
+
+
 def preload_collector(image: str, cluster_name: str, repo_root: Path, versions: dict[str, Any]) -> str:
     """Pull ``image``, load it into Kind under a local tag, return the tag.
 
@@ -156,12 +166,15 @@ def template_args(
         "container-optimization-data-forwarder.job.enable": False,
         "container-optimization-data-forwarder.cronJob.schedule": "0 0 1 1 *",
     }
+    overrides = dict(stack.helm_overrides)
+    supplied = {key for key, _ in flatten_values(overrides)}
+    # The collector under test is chosen only via --collector-image / StackSpec.collector_image.
+    reserved = {f"{_FORWARDER}.image", f"{_FORWARDER}.images.dataCollection.pullPolicy"}
+    if supplied & reserved:
+        raise HarnessError(f"helm_overrides must not set {sorted(supplied & reserved)}; use StackSpec.collector_image")
     if collector_image:
         defaults[f"{_FORWARDER}.image"] = collector_image
         defaults[f"{_FORWARDER}.images.dataCollection.pullPolicy"] = "Never"
-
-    overrides = dict(stack.helm_overrides)
-    supplied = {key for key, _ in flatten_values(overrides)}
     values = [(key, value) for key, value in defaults.items() if key not in supplied]
     values.extend(flatten_values(overrides))
     for key, value in values:
@@ -208,6 +221,7 @@ def install(
     local = preload_collector(requested, scenario.cluster_name, repo_root, versions)
 
     rendered = render(local)
+    _assert_runs_image(rendered, cronjob, local)
     manifest = artifacts / "kubex-stack-rendered.yaml"
     write(manifest, inject(rendered, UPLOAD_HOST, receiver_cluster_ip))
     kubectl(["apply", "-f", str(manifest)], repo_root)

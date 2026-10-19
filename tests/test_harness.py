@@ -368,7 +368,7 @@ class HelmValuesTest(unittest.TestCase):
         self.assertIn("container-optimization-data-forwarder.config.collection.interval_size=2", joined)
 
 
-def _cronjob(name: str, image: str) -> str:
+def _cronjob(name: str, image: str, policy: str = "IfNotPresent") -> str:
     return f"""apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -382,6 +382,7 @@ spec:
           containers:
             - name: forwarder
               image: "{image}"
+              imagePullPolicy: {policy}
 """
 
 
@@ -420,7 +421,14 @@ class StackInstallTest(unittest.TestCase):
             if args[:2] == ["helm", "search"]:
                 return self.SEARCH
             if args[:2] == ["helm", "template"]:
-                return _cronjob("kubex-stack", FORWARDER_IMAGE)
+                # Last --set wins, as in helm.
+                image, policy = FORWARDER_IMAGE, "IfNotPresent"
+                for arg in args:
+                    if arg.startswith("container-optimization-data-forwarder.image="):
+                        image = arg.split("=", 1)[1]
+                    if arg.startswith("container-optimization-data-forwarder.images.dataCollection.pullPolicy="):
+                        policy = arg.split("=", 1)[1]
+                return _cronjob("kubex-stack", image, policy)
             if args[:3] == ["docker", "image", "inspect"]:
                 digest = "densify/container-optimization-data-forwarder@sha256:" + "ab" * 32
                 return json.dumps([{"RepoDigests": [digest], "Os": "linux", "Architecture": "arm64"}])
@@ -447,6 +455,21 @@ class StackInstallTest(unittest.TestCase):
             self.assertEqual(args[args.index("--version") + 1], "1.1.24")
         self.assertEqual(versions["chart_version"], "1.1.24")
         self.assertEqual(cronjob, "kubex-stack")
+
+    def test_helm_overrides_cannot_replace_the_preloaded_collector(self) -> None:
+        overrides = {
+            "container-optimization-data-forwarder": {
+                "image": "old/img:1",
+                "images": {"dataCollection": {"pullPolicy": "Always"}},
+            }
+        }
+        with self.assertRaisesRegex(HarnessError, "helm_overrides must not set"):
+            self._install(self._scenario(helm_overrides=overrides))
+
+    def test_render_that_ignores_the_preloaded_image_fails(self) -> None:
+        with patch.object(stack_mod, "template_args", return_value=("r", "kubex", ["helm", "template", "x"])):
+            with self.assertRaisesRegex(HarnessError, "does not run kubex-e2e/collector"):
+                self._install(self._scenario())
 
     def test_explicit_chart_version_wins_over_search(self) -> None:
         calls, versions, _ = self._install(self._scenario(version="1.1.9"), chart_version="1.1.10")

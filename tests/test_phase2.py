@@ -56,10 +56,11 @@ class ExpectedTimestampsTest(unittest.TestCase):
         # step longer than the interval: only the start point is on the grid
         self.assertEqual(expected_timestamps(T2, Collection(interval="minutes", sample_rate=5)), [T1])
 
-    def test_history_only_extends_workload_files_and_shares_endpoints(self) -> None:
+    def test_history_beyond_one_is_rejected_for_workload_files(self) -> None:
         c = Collection(interval="minutes", interval_size=2, history=2, sample_rate=1)
         self.assertEqual(len(expected_timestamps(T2, c)), 3)
-        self.assertEqual(len(expected_timestamps(T2, c, workload=True)), 5)
+        with self.assertRaisesRegex(ValueError, "history > 1 is not modelled"):
+            expected_timestamps(T2, c, workload=True)
 
     def test_seconds_interval_is_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "does not support interval 'seconds'"):

@@ -264,6 +264,8 @@ class ScenarioSpec:
     resources: Sequence[str] = ()
     lifecycle: Sequence[Wait] = ()
     archive_prefix: str | None = None
+    # Every inventory CSV the archive must hold, as "populated" or "header-only"; any other inventory CSV fails.
+    files: Mapping[str, Literal["populated", "header-only"]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", self.name):

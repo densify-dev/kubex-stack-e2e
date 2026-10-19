@@ -14,9 +14,7 @@ import pytest
 
 from harness.archive import (
     assert_distinct,
-    assert_headers,
     assert_metric_grid,
-    assert_paths,
     assert_unique_keys,
     expected_timestamps,
 )
@@ -132,6 +130,49 @@ SCENARIO = ScenarioSpec(
     lifecycle=[
         Wait(kind="deployment", name="mvp-workload", namespace=WORKLOAD_NAMESPACE, timeout=300)
     ],
+    files={
+        "cluster/attributes.csv": "populated",
+        "cluster/config.csv": "populated",
+        "cluster/cpu_requests.csv": "populated",
+        "cluster/cpu_reservation_percent.csv": "populated",
+        "cluster/memory_requests.csv": "populated",
+        "cluster/memory_reservation_percent.csv": "populated",
+        "container/attributes.csv": "populated",
+        "container/avg_cpu_mcores_workload.csv": "populated",
+        "container/avg_cpu_throttling_percent_workload.csv": "populated",
+        "container/avg_mem_workload.csv": "populated",
+        "container/avg_rss_workload.csv": "populated",
+        "container/avg_ws_workload.csv": "populated",
+        "container/config.csv": "populated",
+        "container/cpu_limit.csv": "populated",
+        "container/cpu_request.csv": "populated",
+        "container/current_size.csv": "populated",
+        "container/max_cpu_mcores_workload.csv": "populated",
+        "container/max_cpu_throttling_percent_workload.csv": "populated",
+        "container/max_mem_workload.csv": "populated",
+        "container/max_restarts.csv": "populated",
+        "container/max_rss_workload.csv": "populated",
+        "container/max_ws_workload.csv": "populated",
+        "container/memory_limit.csv": "populated",
+        "container/memory_request.csv": "populated",
+        "container/sum_cpu_throttling_seconds_workload.csv": "populated",
+        "node/attributes.csv": "populated",
+        "node/config.csv": "populated",
+        "node/cpu_limit.csv": "populated",
+        "node/cpu_request.csv": "populated",
+        "node/cpu_reservation_percent.csv": "populated",
+        "node/memory_limit.csv": "populated",
+        "node/memory_request.csv": "populated",
+        "node/memory_reservation_percent.csv": "populated",
+        "node/pod_count.csv": "populated",
+        "node_group/attributes.csv": "populated",
+        "node_group/config.csv": "populated",
+        "node_group/cpu_requests.csv": "populated",
+        "node_group/cpu_reservation_percent.csv": "populated",
+        "node_group/current_size.csv": "populated",
+        "node_group/memory_requests.csv": "populated",
+        "node_group/memory_reservation_percent.csv": "populated",
+    },
 )
 
 TIME_SERIES = [
@@ -157,9 +198,6 @@ def run(stack_run):
 
 # --- archive shape -----------------------------------------------------------
 
-
-def test_required_files_are_present(archive):
-    assert_paths(archive, required=ENTITY_TABLES + TIME_SERIES)
 
 
 @pytest.mark.parametrize("path", ENTITY_TABLES + TIME_SERIES)
@@ -189,57 +227,6 @@ def test_time_series_follow_the_collector_grid(archive, path):
         IDENTITIES,
         expected_timestamps(audit_time, SCENARIO.forwarder.collection),
     )
-
-
-def test_config_headers(archive):
-    assert_headers(
-        archive.csv("node_group/config.csv"),
-        [
-            "AuditTime",
-            "ClusterName",
-            "NodeGroupName",
-            "HwTotalCpus",
-            "HwTotalPhysicalCpus",
-            "HwCoresPerCpu",
-            "HwThreadsPerCore",
-            "HwTotalMemory",
-            "HwModel",
-            "OsName",
-        ],
-    )
-
-
-def test_attributes_headers(archive):
-    assert_headers(
-        archive.csv("node_group/attributes.csv"),
-        [
-            "ClusterName",
-            "NodeGroupName",
-            "VirtualTechnology",
-            "VirtualDomain",
-            "CpuLimit",
-            "CpuRequest",
-            "MemoryLimit",
-            "MemoryRequest",
-            "CurrentSize",
-            "CurrentNodes",
-            "NodeLabels",
-        ],
-    )
-
-
-@pytest.mark.parametrize(
-    "path,metric_column",
-    [
-        ("node_group/current_size.csv", "CurrentSize"),
-        ("node_group/cpu_requests.csv", "CpuRequests"),
-        ("node_group/memory_requests.csv", "MemoryRequests"),
-        ("node_group/cpu_reservation_percent.csv", "CpuReservationPercent"),
-        ("node_group/memory_reservation_percent.csv", "MemoryReservationPercent"),
-    ],
-)
-def test_time_series_headers(archive, path, metric_column):
-    assert_headers(archive.csv(path), ["ClusterName", "NodeGroupName", "MetricTime", metric_column])
 
 
 # --- membership --------------------------------------------------------------

@@ -289,10 +289,6 @@ def load_directory(directory: Path) -> Archive:
 # Small functions, deliberately. They must not grow into a declarative language.
 
 
-def assert_headers(table: Csv, expected: Sequence[str]) -> None:
-    assert table.headers == list(expected), (
-        f"{table.path}: expected headers {list(expected)!r}, actual {table.headers!r}"
-    )
 
 
 def assert_unique_keys(table: Csv, keys: Sequence[str]) -> None:
@@ -315,11 +311,6 @@ def assert_distinct(table: Csv, column: str, expected: Sequence[str]) -> None:
     )
 
 
-def assert_paths(archive: Archive, required: Sequence[str] = (), forbidden: Sequence[str] = ()) -> None:
-    missing = [p for p in required if p not in archive]
-    assert not missing, f"archive is missing required path(s): {missing!r}"
-    present = [p for p in forbidden if p in archive]
-    assert not present, f"archive contains forbidden path(s): {present!r}"
 
 
 # --- universal checks --------------------------------------------------------
@@ -343,6 +334,9 @@ def expected_timestamps(audit_time: str, collection: Collection, workload: bool 
     The collector only knows days/hours/minutes, so ``seconds`` is rejected rather than guessed.
     """
 
+    if workload and collection.history > 1:
+        # ponytail: the collector repeats each shared window endpoint; model multiplicities when a scenario needs history > 1.
+        raise ValueError("history > 1 is not modelled: the collector writes shared window endpoints twice")
     if collection.interval not in ("minutes", "hours"):
         raise ValueError(f"collector v4.7.5-beta1 does not support interval {collection.interval!r}")
     interval = timedelta(seconds=collection.interval_size * INTERVAL_SECONDS[collection.interval])
