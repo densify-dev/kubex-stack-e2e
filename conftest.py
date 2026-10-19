@@ -78,19 +78,12 @@ def stack_run(pytestconfig: pytest.Config, repo_root: Path, tmp_path_factory: py
         if replay_dir:
             active = replay(scenario, Path(replay_dir).resolve(), tmp_path_factory.mktemp("replay"))
             yield active
-            COVERAGE_WARNINGS.extend(active.coverage_warnings)
-            return
-        with execute(
-            scenario,
-            scenario_dir,
-            repo_root,
-            artifacts_root,
-            chart_version,
-            collector_image,
-            keep_cluster,
-        ) as active:
-            yield active
-            COVERAGE_WARNINGS.extend(active.coverage_warnings)
+        else:
+            with execute(
+                scenario, scenario_dir, repo_root, artifacts_root, chart_version, collector_image, keep_cluster
+            ) as active:
+                yield active
+        COVERAGE_WARNINGS.extend(active.coverage_warnings)
 
     return _run
 

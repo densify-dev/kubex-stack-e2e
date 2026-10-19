@@ -203,9 +203,7 @@ class FixtureServer(ThreadingHTTPServer):
     def __init__(self, address: tuple[str, int], metrics: list[dict[str, Any]]) -> None:
         super().__init__(address, _Handler)
         self.metrics = metrics
-        # Phase 3 will arm this after Prometheus reports the target ready, so a
-        # scheduled step lands inside the collection window rather than at pod
-        # start. Until then counters ramp from process start, as before.
+        # Counters ramp from process start.
         self.started_at = time.monotonic()
         self.lock = Lock()
         self.fixture_server = self

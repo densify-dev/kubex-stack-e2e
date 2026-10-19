@@ -19,7 +19,7 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, BinaryIO, Iterable, Iterator, Mapping, Sequence
+from typing import BinaryIO, Iterable, Iterator, Mapping, Sequence
 
 from harness.spec import INTERVAL_SECONDS, Collection
 
@@ -289,8 +289,6 @@ def load_directory(directory: Path) -> Archive:
 # Small functions, deliberately. They must not grow into a declarative language.
 
 
-
-
 def assert_unique_keys(table: Csv, keys: Sequence[str]) -> None:
     missing = [k for k in keys if k not in table.headers]
     assert not missing, f"{table.path}: unique key column(s) missing: {', '.join(missing)}"
@@ -312,41 +310,27 @@ def assert_distinct(table: Csv, column: str, expected: Sequence[str]) -> None:
 
 
 
-
 # --- universal checks --------------------------------------------------------
 
 
-def expected_timestamps(audit_time: str, collection: Collection, workload: bool = False) -> list[str]:
-    """The MetricTime grid the collector emits for ``audit_time`` and ``collection``.
+def expected_timestamps(audit_time: str, collection: Collection) -> list[str]:
+    """The MetricTime grid the collector emits for ``audit_time`` and ``collection`` (collector v4.7.5-beta1).
 
-    Rule, from collector v4.7.5-beta1: ``AuditTime`` is "now" truncated to the minute (or hour/day)
-    (internal/common/common.go:21-35). Every time series is one Prometheus range query over
-    ``[AuditTime - Interval, AuditTime]`` with ``step = sample_rate`` minutes
-    (internal/common/prometheus.go:254-273, QueryRange call at :57). Prometheus evaluates at
-    ``start + k*step`` exactly, so the grid is deterministic and unrelated to scrape alignment;
-    timestamps are written as RFC3339 UTC (internal/common/output.go:63-79).
-    ``history`` only repeats the query further back for workload files (internal/common/workload.go:252,
-    container/collection.go:831): pass ``workload=True`` for those. Consecutive history windows share
-    an endpoint, so the union is returned; the collector writes that endpoint twice.
-    One variation exists and is deliberately NOT tolerated here: a step is absent when the series has
-    no sample in Prometheus' 5-minute lookback at that step (series younger than the window). Scenarios
-    guarantee warm-up; one that mutates mid-window passes its own timestamps to ``assert_metric_grid``.
-    The collector only knows days/hours/minutes, so ``seconds`` is rejected rather than guessed.
+    ``AuditTime`` is "now" truncated to the minute (internal/common/common.go:21-35). Each time series
+    is one Prometheus range query over ``[AuditTime - Interval, AuditTime]`` with ``step = sample_rate``
+    minutes (internal/common/prometheus.go:254-273), so the grid is exactly ``start + k*step`` in
+    RFC3339 UTC (output.go:63-79). ``history`` only repeats the query for workload files
+    (workload.go:252), which are not modelled. A step is absent when the series has no sample in
+    Prometheus' 5-minute lookback at that step; scenarios guarantee warm-up, and one that mutates
+    mid-window passes its own timestamps to ``assert_metric_grid``.
     """
 
-    if workload and collection.history > 1:
-        # ponytail: the collector repeats each shared window endpoint; model multiplicities when a scenario needs history > 1.
-        raise ValueError("history > 1 is not modelled: the collector writes shared window endpoints twice")
     if collection.interval not in ("minutes", "hours"):
         raise ValueError(f"collector v4.7.5-beta1 does not support interval {collection.interval!r}")
     interval = timedelta(seconds=collection.interval_size * INTERVAL_SECONDS[collection.interval])
     step = timedelta(minutes=collection.sample_rate)
-    end = datetime.fromisoformat(audit_time).astimezone(timezone.utc)
-    grid: set[datetime] = set()
-    for past in range(collection.history if workload else 1):
-        start = end - interval * (past + 1)
-        grid.update(start + step * k for k in range(interval // step + 1))
-    return sorted(t.strftime("%Y-%m-%dT%H:%M:%SZ") for t in grid)
+    start = datetime.fromisoformat(audit_time).astimezone(timezone.utc) - interval
+    return [(start + step * k).strftime("%Y-%m-%dT%H:%M:%SZ") for k in range(interval // step + 1)]
 
 
 def assert_metric_grid(
@@ -379,13 +363,10 @@ def assert_metric_grid(
         )
 
 
-# A failed query is logged as "... query=<q> message=<err>" (collector internal/common/result.go:34,42;
-# workload.go:256; container/collection.go:834); the "no data" skip is the same line with a different
-# <err> (filter.go:268-269) and must pass. <err> is a prometheus/client_golang v1.25.0 error rendered
-# "<type>: <msg>" (api/prometheus/v1/api.go:127; types :87-93, non-2xx text :1036-1040), a transport
-# error from net/http or hashicorp/go-retryablehttp v0.7.8 (client.go:837,841), or the collector's own
-# filter.go:266. The last three are FatalError messages (cmd/main.go:45,48; common/prometheus.go:158)
-# for a query or connection failure that stops the run.
+# A failed query is logged as "... query=<q> message=<err>" (collector internal/common/result.go:34,42);
+# the "no data" skip is the same line with a different <err> (filter.go:268-269) and must pass. The
+# markers are the prometheus/client_golang error types, transport errors from net/http and
+# go-retryablehttp, and the collector's own FatalError messages that stop a run.
 QUERY_FAILURES = (
     "bad_data:", "execution:", "timeout:", "canceled:", "bad_response:", "server_error:", "client_error:",
     "giving up after", "connection refused", "no such host", "i/o timeout",
@@ -395,13 +376,13 @@ QUERY_FAILURES = (
 )
 
 
-def assert_log_clean(archive: Archive, allowed: Sequence[str] = ()) -> None:
+def assert_log_clean(archive: Archive) -> None:
     """Fail on query-execution failures in log.txt only; skipped-because-absent lines pass."""
 
     bad = []
     for number, line in enumerate(archive.raw("log.txt").decode("utf-8", "replace").splitlines(), start=1):
         _, marker, message = line.rpartition(" message=")
         text = message if marker and " query=" in line else line
-        if any(f in text for f in QUERY_FAILURES) and not any(a in line for a in allowed):
+        if any(f in text for f in QUERY_FAILURES):
             bad.append(f"log.txt:{number}: {line[:300]}")
     assert not bad, f"collector reported {len(bad)} query failure(s):\n" + "\n".join(bad[:10])

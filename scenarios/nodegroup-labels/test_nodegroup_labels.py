@@ -199,7 +199,6 @@ def run(stack_run):
 # --- archive shape -----------------------------------------------------------
 
 
-
 @pytest.mark.parametrize("path", ENTITY_TABLES + TIME_SERIES)
 def test_cluster_and_group_identity_is_the_only_one(archive, path):
     """Exactly one cluster and one node group. The ignored label must not group."""
@@ -213,7 +212,7 @@ def test_cluster_and_group_identity_is_the_only_one(archive, path):
 def test_entity_tables_hold_exactly_one_row(archive, path):
     table = archive.csv(path)
     assert len(table) == 1, f"{path}: entity table should hold one row per node group"
-    assert_unique_keys(table, ["ClusterName", "NodeGroupName"])
+    assert_unique_keys(table, KEYS)
 
 
 @pytest.mark.parametrize("path", TIME_SERIES)
@@ -311,13 +310,19 @@ def test_attribute_memory_limit(archive, oracle):
 
 
 # --- node_group/config.csv ---------------------------------------------------
-# HwTotalMemory is not asserted: its unit (bytes here, MiB in node/config.csv) is
-# pending SME #9.
 
 
 def test_config_total_cpus(archive, oracle):
     row = archive.csv("node_group/config.csv").one(**ROW)
     assert int(row["HwTotalCpus"]) == int(oracle.capacity("cpu", NODE_GROUP))
+
+
+def test_config_total_memory_in_bytes(archive, oracle):
+    """Unlike requests and limits (/1024/1024) and node/config.csv (MiB), this is the raw sum of
+    kube_node_status_capacity bytes over the group (internal/nodegroup/nodegroup.go:71-78, :364-366, :113)."""
+
+    row = archive.csv("node_group/config.csv").one(**ROW)
+    assert int(row["HwTotalMemory"]) == int(oracle.capacity("memory", NODE_GROUP))
 
 
 def test_config_os_name(archive, oracle):

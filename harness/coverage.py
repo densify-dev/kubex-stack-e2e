@@ -4,14 +4,13 @@ Source of truth is collector v4.7.5-beta1 (file names from NewWorkloadMetricHold
 internal/common/workload.go and the per-entity writers; headers from the Fprintln literals and
 generateCsvHeaderFormat in internal/common/output.go). Paths the live archive emits were checked
 against it. A column is one of: "key" (identity or time), "test:<path>::<function>" (asserted by
-that test today), "excluded:<reason>", "pending SME #<n>" (unit ruling outstanding), or
-"unclassified" (no scenario asserts it yet). The runtime check fails on missing, renamed or
-reordered columns and warns on additions; it never requires zero "unclassified".
+that test today), "excluded:<reason>", or "unclassified" (no scenario asserts it yet). The runtime
+check fails on missing, renamed or reordered columns and warns on additions; it never requires
+zero "unclassified".
 """
 
 from __future__ import annotations
 
-import re
 from typing import Sequence
 
 from harness.archive import Archive
@@ -21,7 +20,6 @@ KEYS = {
     "Namespace", "EntityName", "EntityType", "ContainerName", "HpaName", "RqName", "CrqName",
 }
 _T = "test:scenarios/nodegroup-labels/test_nodegroup_labels.py::"
-CLASSIFICATION = re.compile(r"key|unclassified|test:[^:]+\.py::test_\w+|excluded:.+|pending SME #\d+[ab]?")
 
 
 def _csv(header: str, **cols: str) -> dict[str, str]:
@@ -73,8 +71,8 @@ INVENTORY: dict[str, dict[str, str]] = {
     "node/memory_request.csv": _csv(NO + "MemoryRequest"),
     "node/gpu_limit.csv": _csv(NO + "GpuLimit"),
     "node/gpu_request.csv": _csv(NO + "GpuRequest"),
-    "node/ephemeral_storage_limit.csv": _csv(NO + "EphemeralStorageLimit", EphemeralStorageLimit="pending SME #4"),
-    "node/ephemeral_storage_request.csv": _csv(NO + "EphemeralStorageRequest", EphemeralStorageRequest="pending SME #4"),
+    "node/ephemeral_storage_limit.csv": _csv(NO + "EphemeralStorageLimit"),
+    "node/ephemeral_storage_request.csv": _csv(NO + "EphemeralStorageRequest"),
     "node/cpu_reservation_percent.csv": _csv(NO + "CpuReservationPercent"),
     "node/memory_reservation_percent.csv": _csv(NO + "MemoryReservationPercent"),
     "node/ephemeral_storage_reservation_percent.csv": _csv(NO + "EphemeralStorageReservationPercent"),
@@ -107,7 +105,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "node/net_received_packets.csv": _csv(NO + "NetReceivedPackets"),
     "node/net_sent_packets.csv": _csv(NO + "NetSentPackets"),
     "node/net_total_packets.csv": _csv(NO + "NetTotalPackets"),
-    "node_group/config.csv": _csv("AuditTime,ClusterName,NodeGroupName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwModel,OsName", HwTotalCpus=_T + "test_config_total_cpus", HwTotalMemory="pending SME #9", OsName=_T + "test_config_os_name"),
+    "node_group/config.csv": _csv("AuditTime,ClusterName,NodeGroupName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwModel,OsName", HwTotalCpus=_T + "test_config_total_cpus", OsName=_T + "test_config_os_name"),
     "node_group/attributes.csv": _csv("ClusterName,NodeGroupName,VirtualTechnology,VirtualDomain,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,CurrentSize,CurrentNodes,NodeLabels", VirtualTechnology=_T + "test_attributes_describe_a_node_group", CpuLimit=_T + "test_attribute_cpu_limit", CpuRequest=_T + "test_attribute_cpu_request", MemoryLimit=_T + "test_attribute_memory_limit", MemoryRequest=_T + "test_attribute_memory_request", VirtualDomain=_T + "test_attributes_describe_a_node_group", CurrentSize=_T + "test_both_workers_are_in_the_group", CurrentNodes=_T + "test_both_workers_are_in_the_group"),
     "node_group/current_size.csv": _csv(NG + "CurrentSize", CurrentSize=_T + "test_current_size_holds_for_every_sample"),
     "node_group/cpu_requests.csv": _csv(NG + "CpuRequests", CpuRequests=_T + "test_requests_match_the_cluster"),
@@ -137,7 +135,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "node_group/gpu_mem_used_avg.csv": _csv(NG + "GpuMemUsedAvg"),
     "node_group/gpu_power_usage_avg.csv": _csv(NG + "GpuPowerUsageAvg"),
     "container/config.csv": _csv("AuditTime,ClusterName,Namespace,EntityName,EntityType,ContainerName,HwTotalMemory,GpuMemoryTotal,OsName,HwManufacturer"),
-    "container/attributes.csv": _csv("ClusterName,Namespace,EntityName,EntityType,ContainerName,ContainerType,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,ContainerLabels,PodLabels,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,GpuLimitFloat,GpuRequestFloat,CurrentNodes,PowerState,CreatedByKind,CreatedByName,CurrentSize,CreateTime,ContainerRestarts,NamespaceLabels,NamespaceCpuRequest,NamespaceCpuLimit,NamespaceMemoryRequest,NamespaceMemoryLimit,NamespacePodsLimit,HpaName,HpaLabels,HpaTargetMetricName,HpaTargetMetricType,HpaTargetMetricValue,HpaTargetMetrics,QosClass,GpuModel,GpuSharingStrategy,EphemeralStorageRequest,EphemeralStorageLimit,Runtimes", EphemeralStorageRequest="pending SME #4", EphemeralStorageLimit="pending SME #4"),
+    "container/attributes.csv": _csv("ClusterName,Namespace,EntityName,EntityType,ContainerName,ContainerType,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,ContainerLabels,PodLabels,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,GpuLimitFloat,GpuRequestFloat,CurrentNodes,PowerState,CreatedByKind,CreatedByName,CurrentSize,CreateTime,ContainerRestarts,NamespaceLabels,NamespaceCpuRequest,NamespaceCpuLimit,NamespaceMemoryRequest,NamespaceMemoryLimit,NamespacePodsLimit,HpaName,HpaLabels,HpaTargetMetricName,HpaTargetMetricType,HpaTargetMetricValue,HpaTargetMetrics,QosClass,GpuModel,GpuSharingStrategy,EphemeralStorageRequest,EphemeralStorageLimit,Runtimes"),
     "container/events.csv": _csv("ClusterName,Namespace,EntityName,EntityType,ContainerName,EventTime,ExitCode,IsPid1"),
     "container/current_size.csv": _csv(CO + "CurrentSize"),
     "container/cpu_limit.csv": _csv(CO + "CpuLimit"),
@@ -146,15 +144,15 @@ INVENTORY: dict[str, dict[str, str]] = {
     "container/memory_request.csv": _csv(CO + "MemoryRequest"),
     "container/gpu_limit.csv": _csv(CO + "GpuLimit"),
     "container/gpu_request.csv": _csv(CO + "GpuRequest"),
-    "container/ephemeral_storage_limit.csv": _csv(CO + "EphemeralStorageLimit", EphemeralStorageLimit="pending SME #4"),
-    "container/ephemeral_storage_request.csv": _csv(CO + "EphemeralStorageRequest", EphemeralStorageRequest="pending SME #4"),
+    "container/ephemeral_storage_limit.csv": _csv(CO + "EphemeralStorageLimit"),
+    "container/ephemeral_storage_request.csv": _csv(CO + "EphemeralStorageRequest"),
     "container/max_restarts.csv": _csv(CO + "MaxRestarts"),
     "container/avg_cpu_mcores_workload.csv": _csv(CO + "AvgCpuMcores"),
     "container/avg_custom_cpu_mcores_workload.csv": _csv(CO + "AvgCustomCpuMcores"),
-    "container/avg_mem_workload.csv": _csv(CO + "AvgMem", AvgMem="pending SME #6a"),
-    "container/avg_rss_workload.csv": _csv(CO + "AvgRss", AvgRss="pending SME #6a"),
-    "container/avg_ws_workload.csv": _csv(CO + "AvgWs", AvgWs="pending SME #6a"),
-    "container/avg_custom_memory_workload.csv": _csv(CO + "AvgCustomMemory", AvgCustomMemory="pending SME #6a"),
+    "container/avg_mem_workload.csv": _csv(CO + "AvgMem"),
+    "container/avg_rss_workload.csv": _csv(CO + "AvgRss"),
+    "container/avg_ws_workload.csv": _csv(CO + "AvgWs"),
+    "container/avg_custom_memory_workload.csv": _csv(CO + "AvgCustomMemory"),
     "container/avg_disk_workload.csv": _csv(CO + "AvgDisk", AvgDisk=_DISK),
     "container/avg_cpu_throttling_percent_workload.csv": _csv(CO + "AvgCpuThrottlingPercent"),
     "container/ephemeral_storage_usage_bytes_avg_workload.csv": _csv(CO + "EphemeralStorageUsageBytesAvg"),
@@ -165,10 +163,10 @@ INVENTORY: dict[str, dict[str, str]] = {
     "container/gpu_power_usage_avg_workload.csv": _csv(CO + "GpuPowerUsageAvg"),
     "container/max_cpu_mcores_workload.csv": _csv(CO + "MaxCpuMcores"),
     "container/max_custom_cpu_mcores_workload.csv": _csv(CO + "MaxCustomCpuMcores"),
-    "container/max_mem_workload.csv": _csv(CO + "MaxMem", MaxMem="pending SME #6b"),
-    "container/max_rss_workload.csv": _csv(CO + "MaxRss", MaxRss="pending SME #6b"),
-    "container/max_ws_workload.csv": _csv(CO + "MaxWs", MaxWs="pending SME #6b"),
-    "container/max_custom_memory_workload.csv": _csv(CO + "MaxCustomMemory", MaxCustomMemory="pending SME #6b"),
+    "container/max_mem_workload.csv": _csv(CO + "MaxMem"),
+    "container/max_rss_workload.csv": _csv(CO + "MaxRss"),
+    "container/max_ws_workload.csv": _csv(CO + "MaxWs"),
+    "container/max_custom_memory_workload.csv": _csv(CO + "MaxCustomMemory"),
     "container/max_disk_workload.csv": _csv(CO + "MaxDisk", MaxDisk=_DISK),
     "container/max_cpu_throttling_percent_workload.csv": _csv(CO + "MaxCpuThrottlingPercent"),
     "container/ephemeral_storage_usage_bytes_max_workload.csv": _csv(CO + "EphemeralStorageUsageBytesMax"),
@@ -208,7 +206,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "rq/attributes.csv": _csv("ClusterName,Namespace,RqName,VirtualTechnology,VirtualDomain,VirtualDatacenter,CreateTime,ResourceMetadata,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,CurrentSize,NamespaceCpuLimit,NamespaceCpuRequest,NamespaceMemoryLimit,NamespaceMemoryRequest,NamespacePodsLimit"),
     "rq/cpu_limits.csv": _csv(RQ + "CpuLimits"),
     "rq/cpu_requests.csv": _csv(RQ + "CpuRequests"),
-    "rq/mem_limits.csv": _csv(RQ + "MemLimits", MemLimits="pending SME #3"),
+    "rq/mem_limits.csv": _csv(RQ + "MemLimits"),
     "rq/mem_requests.csv": _csv(RQ + "MemRequests"),
     "rq/pods.csv": _csv(RQ + "PodsLimits"),
     "crq/config.csv": _csv("AuditTime,ClusterName,CrqName"),
@@ -234,10 +232,10 @@ def check_archive(archive: Archive) -> tuple[list[str], list[str]]:
         if not path.lower().endswith(".csv"):
             continue
         headers = archive.csv(path).headers
-        known = list(INVENTORY.get(path, ()))
         if path not in INVENTORY:
             warnings.append(f"{path}: not in the coverage inventory (new CSV, columns {headers!r})")
             continue
+        known = list(INVENTORY[path])
         if [h for h in headers if h in known] != known:
             errors.append(f"{path}: header {headers!r} lost, renamed or reordered columns of {known!r}")
         elif len(headers) > len(known):

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -45,12 +46,6 @@ def flatten_values(value: dict[str, Any], prefix: str = "") -> list[tuple[str, o
     return flattened
 
 
-def _chart_alias(chart: str) -> str:
-    if "/" in chart and not chart.startswith(("oci://", "http://", "https://")):
-        return chart.split("/", 1)[0]
-    return "kubex"
-
-
 def resolve_chart_version(chart: str, repo_root: Path) -> str:
     """Highest stable semver published for ``chart``. Prereleases are ignored."""
 
@@ -63,8 +58,8 @@ def resolve_chart_version(chart: str, repo_root: Path) -> str:
     return max(stable, key=lambda v: tuple(int(part) for part in v.split(".")))
 
 
-def _forwarders(manifest: str) -> list[tuple[str, str]]:
-    """(CronJob name, image) for every CronJob running the data forwarder."""
+def find_forwarder(manifest: str) -> tuple[str, str]:
+    """(CronJob name, image) of the single CronJob running the data forwarder."""
 
     found = []
     for doc in yaml.safe_load_all(manifest):
@@ -74,22 +69,9 @@ def _forwarders(manifest: str) -> list[tuple[str, str]]:
         for container in pod.get("containers", []):
             if _FORWARDER in container.get("image", ""):
                 found.append((doc["metadata"]["name"], container["image"]))
-    return found
-
-
-def _forwarder(manifest: str) -> tuple[str, str]:
-    found = _forwarders(manifest)
     if len(found) != 1:
         raise HarnessError(f"expected exactly one forwarder CronJob in the rendered chart, found {found}")
     return found[0]
-
-
-def forwarder_cronjob(manifest: str) -> str:
-    return _forwarder(manifest)[0]
-
-
-def forwarder_image(manifest: str) -> str:
-    return _forwarder(manifest)[1]
 
 
 def _assert_runs_image(manifest: str, cronjob: str, image: str) -> None:
@@ -133,14 +115,13 @@ def template_args(
     forwarder: ForwarderSpec,
     chart_version: str | None = None,
     collector_image: str | None = None,
-) -> tuple[str, str, list[str]]:
+) -> list[str]:
     """``helm template`` args. ``collector_image`` is the preloaded local tag, never pulled."""
 
     version = chart_version or stack.version
     args = ["helm", "template", stack.release_name, stack.chart, "--namespace", stack.namespace]
     if version:
         args.extend(["--version", version])
-    chart_alias = _chart_alias(stack.chart)
     collection = forwarder.collection
     defaults: dict[str, object] = {
         "stack.densify.createSecret": False,
@@ -182,7 +163,7 @@ def template_args(
             args.extend(["--set-json", f"{key}={json_value(value)}"])
         else:
             args.extend(["--set-string" if isinstance(value, str) else "--set", f"{key}={scalar(value)}"])
-    return stack.repository, chart_alias, args
+    return args
 
 
 def install(
@@ -190,9 +171,9 @@ def install(
     repo_root: Path,
     artifacts: Path,
     receiver_cluster_ip: str,
+    versions: dict[str, Any],
     chart_version: str | None = None,
     collector_image: str | None = None,
-    versions: dict[str, Any] | None = None,
 ) -> str:
     """Resolve versions, preload the collector, render, inject host aliases, apply.
 
@@ -202,20 +183,21 @@ def install(
 
     from scripts.inject_host_aliases import inject
 
-    versions = versions if versions is not None else {}
     stack = scenario.stack
-    run(["helm", "repo", "add", _chart_alias(stack.chart), stack.repository, "--force-update"], cwd=repo_root)
+    chart = stack.chart
+    alias = chart.split("/", 1)[0] if "/" in chart and not chart.startswith(("oci://", "http://", "https://")) else "kubex"
+    run(["helm", "repo", "add", alias, stack.repository, "--force-update"], cwd=repo_root)
     run(["helm", "repo", "update"], cwd=repo_root)
     version = chart_version or stack.version or resolve_chart_version(stack.chart, repo_root)
     versions["chart_version"] = version
 
     def render(image: str | None = None) -> str:
-        _, _, args = template_args(scenario.name, stack, scenario.forwarder, version, image)
+        args = template_args(scenario.name, stack, scenario.forwarder, version, image)
         return run(args, cwd=repo_root, timeout=900)
 
     # The default render finds the CronJob (its image still names the forwarder)
     # and the chart's default collector image. The final render swaps in the local tag.
-    cronjob, default_image = _forwarder(render())
+    cronjob, default_image = find_forwarder(render())
     requested = collector_image or stack.collector_image or default_image
     versions["collector_image_requested"] = requested
     local = preload_collector(requested, scenario.cluster_name, repo_root, versions)
@@ -275,8 +257,6 @@ def await_lifecycle(scenario: ScenarioSpec, repo_root: Path) -> None:
 
 def trigger_forwarder(scenario: ScenarioSpec, repo_root: Path, discovered_cronjob: str) -> str:
     """Create a Job from the forwarder CronJob and wait for it to succeed."""
-
-    import time
 
     forwarder = scenario.forwarder
     namespace = scenario.stack.namespace

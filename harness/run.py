@@ -10,7 +10,7 @@ import json
 import re
 import time
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
 
@@ -52,21 +52,16 @@ class Run:
     coverage_warnings: list[str] = field(default_factory=list)
 
 
-def _write_replay_inputs(artifacts: Path, snapshots: list[Snapshot], run: Run, versions: dict[str, Any]) -> None:
+def _write_replay_inputs(artifacts: Path, run: Run) -> None:
     """Everything replay needs besides extracted-csv/. Written before the tests so a red run keeps it."""
 
-    # Compact and unsorted: these are the raw kubectl items, exactly as captured.
-    write(
-        artifacts / "snapshots.json",
-        json.dumps([{"label": s.label, "items": s.items} for s in snapshots]),
-    )
+    write(artifacts / "snapshots.json", json.dumps([asdict(s) for s in run.snapshots]))
     write_json(
         artifacts / "replay.json",
         {
             "uploads": run.uploads,
             "job_name": run.job_name,
             "job_failures": run.job_failures,
-            "versions": versions,
         },
     )
 
@@ -82,11 +77,8 @@ def replay(scenario: ScenarioSpec, directory: Path, artifacts: Path) -> Run:
         snapshots_raw = json.loads((directory / "snapshots.json").read_text())
         meta = json.loads((directory / "replay.json").read_text())
     except (OSError, json.JSONDecodeError) as exc:
-        raise HarnessError(
-            f"replay directory {directory}: cannot read snapshots.json/replay.json ({exc}); "
-            "artifacts from before replay support must be regenerated with a live run"
-        ) from exc
-    snapshots = [Snapshot.from_items(item["label"], item["items"]) for item in snapshots_raw]
+        raise HarnessError(f"replay directory {directory}: cannot read snapshots.json/replay.json ({exc})") from exc
+    snapshots = [Snapshot(**item) for item in snapshots_raw]
     return Run(
         scenario=scenario,
         archive=load_directory(directory / "extracted-csv"),
@@ -170,7 +162,7 @@ def execute(
         receiver.deploy(repo_root)
         fixtures.deploy(scenario, repo_root, artifacts)
         cronjob = stack.install(
-            scenario, repo_root, artifacts, receiver.cluster_ip(repo_root), chart_version, collector_image, versions
+            scenario, repo_root, artifacts, receiver.cluster_ip(repo_root), versions, chart_version, collector_image
         )
         stack.apply_resources(resources, repo_root)
         stack.await_lifecycle(scenario, repo_root)
@@ -189,7 +181,7 @@ def execute(
         )
         uploads = receiver.archive_upload_count(state)
         log = archive.raw("log.txt").decode("utf-8", "replace") if "log.txt" in archive else ""
-        found = re.search(r"collection version (\S+)", log.splitlines()[0]) if log.strip() else None
+        found = re.search(r"collection version (\S+)", log.split("\n", 1)[0])
         versions["collector_version"] = found.group(1) if found else "unknown"
         oracle = Oracle(snapshots=snapshots)
         write_json(artifacts / "archive-paths.json", archive.paths)
@@ -204,7 +196,7 @@ def execute(
             snapshots=snapshots,
             job_failures=job_failures,
         )
-        _write_replay_inputs(artifacts, snapshots, run, versions)
+        _write_replay_inputs(artifacts, run)
         yield run
 
         # Runs after the tests, whether they passed or failed — a generator
