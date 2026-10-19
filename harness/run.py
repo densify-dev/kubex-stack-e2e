@@ -209,17 +209,17 @@ def execute(
             artifacts,
             scenario.name,
             "collected",
+            versions,
             captured_uploads=uploads,
             archive_paths=len(archive.paths),
             drift_snapshots=len(snapshots),
             job_failures=job_failures,
             assertions="see pytest report",
             coverage_warnings=run.coverage_warnings,
-            **versions,
         )
     except Exception as exc:
         failed = True
-        artifacts_mod.summary(artifacts, scenario.name, "setup failed", error=str(exc), **versions)
+        artifacts_mod.summary(artifacts, scenario.name, "setup failed", versions, error=str(exc))
         raise
     finally:
         write_json(artifacts / "versions.json", versions)

@@ -527,8 +527,8 @@ class StackInstallTest(unittest.TestCase):
             summary = (root / "artifacts" / "demo" / "summary.md").read_text()
         self.assertEqual(set(versions), set(run_mod.VERSION_FIELDS))
         self.assertEqual(versions["chart_version"], "1.1.24")
-        for field in run_mod.VERSION_FIELDS:
-            self.assertIn(field.replace("_", " ").capitalize(), summary)
+        self.assertIn("| Chart | `1.1.24` |", summary)
+        self.assertIn("| Collector | unknown |", summary)
 
 
 class SpecValidationTest(unittest.TestCase):

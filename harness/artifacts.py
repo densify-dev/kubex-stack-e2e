@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from harness.command import kubectl, kubectl_json, write
 
@@ -75,18 +75,34 @@ def collect(repo_root: Path, artifacts: Path, namespace: str, job: str | None) -
         write(logs / "collection-error.txt", f"pod log discovery failed: {exc}\n")
 
 
+_VERSION_LABELS = {
+    "chart_version": "Chart",
+    "collector_version": "Collector",
+    "collector_image_requested": "Collector image",
+    "collector_image_digest": "Collector digest",
+    "collector_image_id": "Image ID on node",
+}
+
+
+def _table(header: tuple[str, str], rows: list[tuple[str, object]]) -> list[str]:
+    return [f"| {header[0]} | {header[1]} |", "| --- | --- |", *(f"| {k} | {v} |" for k, v in rows), ""]
+
+
 def summary(
     artifacts: Path,
     scenario_name: str,
     status: str,
+    versions: Mapping[str, object],
     coverage_warnings: Sequence[str] | None = None,
     **details: object,
 ) -> None:
-    lines = [f"# Scenario {scenario_name}", "", f"**Status:** {status}"]
-    lines.extend(f"**{key.replace('_', ' ').capitalize()}:** {value}" for key, value in details.items())
-    lines.append("")
+    lines = [f"# Scenario {scenario_name}", "", f"**Status:** {status}", ""]
+    lines += _table(
+        ("Version", "Value"),
+        [(label, f"`{versions[key]}`" if versions.get(key) else "unknown") for key, label in _VERSION_LABELS.items()],
+    )
+    if details:
+        lines += _table(("Run", "Value"), [(k.replace("_", " ").capitalize(), v) for k, v in details.items()])
     if coverage_warnings is not None:
-        lines.extend(["## Coverage warnings", ""])
-        lines.extend([f"- {w}" for w in coverage_warnings] or ["none"])
-        lines.append("")
+        lines += ["## Coverage warnings", "", *([f"- {w}" for w in coverage_warnings] or ["none"]), ""]
     write(artifacts / "summary.md", "\n".join(lines))

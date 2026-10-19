@@ -278,11 +278,11 @@ class StackAndSummaryTest(unittest.TestCase):
     def test_summary_has_a_coverage_warnings_section_only_when_given(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            artifacts_mod.summary(root, "demo", "collected", coverage_warnings=[])
+            artifacts_mod.summary(root, "demo", "collected", {}, coverage_warnings=[])
             self.assertIn("## Coverage warnings\n\nnone", (root / "summary.md").read_text())
-            artifacts_mod.summary(root, "demo", "collected", coverage_warnings=["a.csv: new column"])
+            artifacts_mod.summary(root, "demo", "collected", {}, coverage_warnings=["a.csv: new column"])
             self.assertIn("- a.csv: new column", (root / "summary.md").read_text())
-            artifacts_mod.summary(root, "demo", "setup failed", error="x")
+            artifacts_mod.summary(root, "demo", "setup failed", {}, error="x")
             self.assertNotIn("Coverage warnings", (root / "summary.md").read_text())
 
 
