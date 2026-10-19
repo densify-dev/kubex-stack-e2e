@@ -7,12 +7,10 @@ on:
   workflow_dispatch:
     inputs:
       scenario:
-        description: Functional scenario to run
-        required: true
-        type: choice
-        default: nodegroup-labels
-        options:
-          - nodegroup-labels
+        description: Scenario directory under scenarios/ (blank runs all)
+        required: false
+        type: string
+        default: ""
       tier:
         description: Test tier
         required: true
@@ -22,7 +20,7 @@ on:
           - pr
           - release
       stack_chart_version:
-        description: Chart version override (blank uses the harness default)
+        description: Chart version override (blank uses the latest stable)
         required: false
         type: string
         default: ""
@@ -39,23 +37,65 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  HELM_VERSION: v4.2.4
+
 jobs:
-  run-scenario:
+  # Versions are resolved once so every scenario leg tests the same chart and collector digest.
+  resolve:
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 10
+    outputs:
+      chart_version: ${{ steps.versions.outputs.chart_version }}
+      collector_image: ${{ steps.versions.outputs.collector_image }}
+      scenarios: ${{ steps.scenarios.outputs.scenarios }}
     env:
-      KIND_VERSION: v0.33.0
-      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
-      # Matches the Kubernetes version of the default node image.
-      KUBECTL_VERSION: v1.37.0
-      KUBECTL_SHA256: 6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
-      SCENARIO: ${{ inputs.scenario || 'nodegroup-labels' }}
-      STACK_CHART_VERSION_OVERRIDE: ${{ inputs.stack_chart_version }}
+      CHART_OVERRIDE: ${{ inputs.stack_chart_version }}
       # The chart default (:4) is 4.7.4 until 4.7.5 ships; pushes test the 4.7.5 beta.
-      COLLECTOR_IMAGE_OVERRIDE: ${{ github.event_name == 'push' && 'densify/container-optimization-data-forwarder:4.7.5-beta1' || inputs.collector_image }}
-      # `-m release` alone would skip tests marked only `pr`, so the full tier is
-      # always the disjunction.
-      TIER: ${{ inputs.tier == 'release' && 'pr or release' || 'pr' }}
+      COLLECTOR_OVERRIDE: ${{ github.event_name == 'push' && 'densify/container-optimization-data-forwarder:4.7.5-beta1' || inputs.collector_image }}
+      SCENARIO: ${{ inputs.scenario }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Resolve chart and collector
+        id: versions
+        run: |
+          resolved="$(python3 -m scripts.resolve_versions "${CHART_OVERRIDE}")"
+          version="$(sed -n 's/^chart_version=//p' <<<"${resolved}")"
+          image="${COLLECTOR_OVERRIDE:-$(sed -n 's/^collector_image=//p' <<<"${resolved}")}"
+          digest="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "chart_version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "collector_image=${image%%[:@]*}@${digest}" >> "${GITHUB_OUTPUT}"
+          printf '**Chart:** %s\n\n**Collector:** %s (%s)\n' "${version}" "${image}" "${digest}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: List scenarios
+        id: scenarios
+        run: |
+          if [[ -n "${SCENARIO}" ]]; then
+            test -d "scenarios/${SCENARIO}"
+            echo "scenarios=$(jq -cn --arg s "${SCENARIO}" '[$s]')" >> "${GITHUB_OUTPUT}"
+          else
+            echo "scenarios=$(find scenarios -mindepth 1 -maxdepth 1 -type d ! -name '__*' -printf '%f\n' | sort | jq -Rcs 'split("\n") | map(select(length > 0))')" >> "${GITHUB_OUTPUT}"
+          fi
+
+  unit-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -72,10 +112,44 @@ jobs:
       - name: Run unit tests
         run: python3 -m pytest tests -q
 
+  scenario:
+    needs: [resolve, unit-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        scenario: ${{ fromJSON(needs.resolve.outputs.scenarios) }}
+    env:
+      KIND_VERSION: v0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+      # Matches the Kubernetes version of the default node image.
+      KUBECTL_VERSION: v1.37.0
+      KUBECTL_SHA256: 6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
+      SCENARIO: ${{ matrix.scenario }}
+      CHART_VERSION: ${{ needs.resolve.outputs.chart_version }}
+      COLLECTOR_IMAGE: ${{ needs.resolve.outputs.collector_image }}
+      # `-m release` alone would skip tests marked only `pr`, so the full tier is
+      # always the disjunction.
+      TIER: ${{ inputs.tier == 'release' && 'pr or release' || 'pr' }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements.txt
+
       - name: Set up Helm
         uses: azure/setup-helm@v5
         with:
-          version: v4.2.4
+          version: ${{ env.HELM_VERSION }}
 
       - name: Install Kind
         run: |
@@ -92,15 +166,13 @@ jobs:
 
       - name: Run functional scenario
         id: functional-scenario
-        # One scenario directory per job: each needs its own Kind cluster, so the
-        # explicit matrix stays. Markers select the tier inside a job.
         run: |
           mkdir -p artifacts/kind-functional
           python3 -m pytest "scenarios/${SCENARIO}" -v \
             -m "${TIER}" \
             --junitxml="artifacts/kind-functional/${SCENARIO}-pytest.xml" \
-            --stack-chart-version "${STACK_CHART_VERSION_OVERRIDE}" \
-            --collector-image "${COLLECTOR_IMAGE_OVERRIDE}"
+            --stack-chart-version "${CHART_VERSION}" \
+            --collector-image "${COLLECTOR_IMAGE}"
 
       - name: Publish scenario summary
         if: always()
@@ -122,7 +194,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: kind-functional-${{ env.SCENARIO }}-${{ github.run_id }}
-          path: artifacts/kind-functional/${{ env.SCENARIO }}
+          name: kind-functional-${{ matrix.scenario }}-${{ github.run_id }}
+          path: artifacts/kind-functional/${{ matrix.scenario }}
           if-no-files-found: warn
           retention-days: 14
