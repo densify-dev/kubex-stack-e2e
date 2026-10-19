@@ -26,6 +26,11 @@ on:
         required: false
         type: string
         default: ""
+      collector_image:
+        description: Collector image override (blank uses the chart default)
+        required: false
+        type: string
+        default: densify/container-optimization-data-forwarder:4.7.5-beta1
 
 concurrency:
   group: kind-functional-${{ github.ref }}
@@ -46,6 +51,8 @@ jobs:
       KUBECTL_SHA256: 6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
       SCENARIO: ${{ inputs.scenario || 'nodegroup-labels' }}
       STACK_CHART_VERSION_OVERRIDE: ${{ inputs.stack_chart_version }}
+      # The chart default (:4) is 4.7.4 until 4.7.5 ships; pushes test the 4.7.5 beta.
+      COLLECTOR_IMAGE_OVERRIDE: ${{ github.event_name == 'push' && 'densify/container-optimization-data-forwarder:4.7.5-beta1' || inputs.collector_image }}
       # `-m release` alone would skip tests marked only `pr`, so the full tier is
       # always the disjunction.
       TIER: ${{ inputs.tier == 'release' && 'pr or release' || 'pr' }}
@@ -92,7 +99,8 @@ jobs:
           python3 -m pytest "scenarios/${SCENARIO}" -v \
             -m "${TIER}" \
             --junitxml="artifacts/kind-functional/${SCENARIO}-pytest.xml" \
-            --stack-chart-version "${STACK_CHART_VERSION_OVERRIDE}"
+            --stack-chart-version "${STACK_CHART_VERSION_OVERRIDE}" \
+            --collector-image "${COLLECTOR_IMAGE_OVERRIDE}"
 
       - name: Publish scenario summary
         if: always()
