@@ -51,7 +51,7 @@ _NODE_SERIES = _t(_NP + "test_node_series_match_the_cluster")
 _NODE_CONFIG = {
     **dict.fromkeys(("HwTotalCpus", "HwTotalPhysicalCpus", "HwCoresPerCpu", "HwThreadsPerCore", "HwTotalMemory"), _t(_NP + "test_node_config_hardware")),
     "OsName": _t(_NP + "test_node_config_os_name"),
-    **dict.fromkeys(("HwModel", "HwMaxNetworkIoBps"), _t(_NP + "test_node_config_leaves_unknown_hardware_blank")),
+    **dict.fromkeys(("HwModel", "HwMaxNetworkIoBps"), _t(_NP + "test_node_config_model_and_network")),
 }
 _NODE_ATTRIBUTES = {
     **dict.fromkeys(("VirtualTechnology", "VirtualDomain", "OsArchitecture", "ProviderId", "K8sVersion"), _t(_NP + "test_node_attributes_identify_the_node")),
@@ -67,7 +67,8 @@ _GROUP_CONFIG = {
     "HwTotalCpus": _t(_NGL + "test_config_total_cpus", _NP + "test_group_config_hardware", _NGR + "test_config_hardware"),
     **dict.fromkeys(("HwTotalPhysicalCpus", "HwCoresPerCpu", "HwThreadsPerCore"), _t(_NP + "test_group_config_hardware", _NGR + "test_config_hardware")),
     "HwTotalMemory": _t(_NGL + "test_config_total_memory_in_bytes", _NP + "test_group_config_hardware", _NGR + "test_config_hardware"),
-    "OsName": _t(_NGL + "test_config_os_name", _NP + "test_group_config_os_name", _NGR + "test_config_os_name"),
+    "HwModel": _t(_NP + "test_group_config_os_and_model", _NGR + "test_config_os_and_model"),
+    "OsName": _t(_NGL + "test_config_os_name", _NP + "test_group_config_os_and_model", _NGR + "test_config_os_and_model"),
 }
 _GROUP_ATTRIBUTES = {
     **dict.fromkeys(("VirtualTechnology", "VirtualDomain"), _t(_NGL + "test_attributes_describe_a_node_group", _NP + "test_node_group_membership", _NGR + "test_group_membership")),
@@ -76,12 +77,13 @@ _GROUP_ATTRIBUTES = {
     "CpuRequest": _t(_NGL + "test_attribute_cpu_request", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits"),
     "MemoryLimit": _t(_NGL + "test_attribute_memory_limit", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits"),
     "MemoryRequest": _t(_NGL + "test_attribute_memory_request", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits"),
+    "NodeLabels": _t(_NP + "test_group_attribute_labels", _NGR + "test_attribute_labels"),
 }
 _GROUP_RESERVATION = _t(_NGL + "test_reservation_percent_matches_the_cluster", _NP + "test_group_reservation_percent_matches_the_cluster", _NGR + "test_reservation_percent_matches_the_cluster")
 
 
 INVENTORY: dict[str, dict[str, str]] = {
-    "cluster/config.csv": _csv("AuditTime,Name", AuditTime=_t(_NP + "test_cluster_config_names_the_cluster")),
+    "cluster/config.csv": _csv("AuditTime,Name"),
     "cluster/attributes.csv": _csv("Name,VirtualTechnology,VirtualDomain,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,K8sVersion", **dict.fromkeys(("VirtualTechnology", "VirtualDomain", "CpuLimit", "CpuRequest", "MemoryLimit", "MemoryRequest", "K8sVersion"), _t(_NP + "test_cluster_attributes_match_the_cluster"))),
     "cluster/cpu_requests.csv": _csv(CL + "CpuRequests", CpuRequests=_t(_NP + "test_cluster_requests_match_the_cluster")),
     "cluster/cpu_reservation_percent.csv": _csv(CL + "CpuReservationPercent", CpuReservationPercent=_t(_NP + "test_cluster_reservation_percent_matches_the_cluster")),

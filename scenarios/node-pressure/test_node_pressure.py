@@ -20,6 +20,8 @@ from harness.archive import (
     assert_metric_grid,
     assert_unique_keys,
     expected_timestamps,
+    label_map,
+    prometheus_labels,
 )
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.oracle import quantity
@@ -38,6 +40,8 @@ from harness.spec import (
 
 HERE = Path(__file__).parent
 GROUP_LABEL = "topology.kubex.ai/node-group"
+# The collector reads HwModel from this label (internal/node/node.go:297); Kind sets none of its own.
+INSTANCE_TYPE = "node.kubernetes.io/instance-type"
 WORKLOAD_NAMESPACE = "node-pressure-workload"
 DEDICATED = Taint(key="stack-e2e.kubex.ai/dedicated", value="pressure", effect="NoSchedule")
 RESERVED = {"system-reserved": "cpu=1,memory=1Gi"}
@@ -50,6 +54,7 @@ PERCENT_TOLERANCE = 0.01
 MIB = 2**20
 
 _SYSTEM_NODE = {"stack-e2e-system": "system"}
+_POOL_A = {GROUP_LABEL: "pool-a", INSTANCE_TYPE: "e2e.pool-a"}
 _CONTROL_PLANE_TOLERATION = [
     {"key": "node-role.kubernetes.io/control-plane", "operator": "Exists", "effect": "NoSchedule"}
 ]
@@ -57,11 +62,11 @@ _CONTROL_PLANE_TOLERATION = [
 SCENARIO = ScenarioSpec(
     name="node-pressure",
     cluster=ClusterSpec(
-        control_planes=[Node(labels=_SYSTEM_NODE)],
+        control_planes=[Node(labels={**_SYSTEM_NODE, INSTANCE_TYPE: "e2e.system"})],
         workers=[
-            Node(labels={GROUP_LABEL: "pool-a"}, kubelet=RESERVED),
-            Node(labels={GROUP_LABEL: "pool-a"}, kubelet=RESERVED),
-            Node(labels={GROUP_LABEL: "pool-b"}, taints=[DEDICATED]),
+            Node(labels=_POOL_A, kubelet=RESERVED),
+            Node(labels=_POOL_A, kubelet=RESERVED),
+            Node(labels={GROUP_LABEL: "pool-b", INSTANCE_TYPE: "e2e.pool-b"}, taints=[DEDICATED]),
         ],
     ),
     stack=StackSpec(
@@ -330,11 +335,12 @@ def test_node_config_os_name(archive, oracle, name):
 
 
 @pytest.mark.parametrize("name", NODES)
-def test_node_config_leaves_unknown_hardware_blank(archive, name):
-    """Kind has no instance-type label and no node exporter, so the model and network speed are blank."""
+def test_node_config_model_and_network(archive, oracle, name):
+    """HwModel is the instance-type label; with no node exporter the network speed is blank."""
 
     row = _config(archive, name)
-    assert (row["HwModel"], row["HwMaxNetworkIoBps"]) == ("", "")
+    expected = _spec_of(oracle, name)["metadata"]["labels"][INSTANCE_TYPE]
+    assert (row["HwModel"], row["HwMaxNetworkIoBps"]) == (expected, "")
 
 
 def _attributes(archive, name):
@@ -394,18 +400,21 @@ def test_node_attribute_taints(archive, oracle, name):
     assert actual == expected
 
 
+def _shared_labels(oracle, names):
+    """Labels, as Prometheus names them, that every one of the nodes carries with the same value."""
+
+    labels = [prometheus_labels(_spec_of(oracle, name)["metadata"]["labels"]).items() for name in names]
+    return dict(set.intersection(*map(set, labels)))
+
+
 @pytest.mark.parametrize("name", NODES)
 def test_node_attribute_labels(archive, oracle, name):
-    """NodeLabels is a '|' separated list of 'label_<name> : <value>' (internal/common/output.go:190)."""
+    """Every Kubernetes label of the node. NodeLabels also carries the series' own labels (job, instance and
+    kube-state-metrics' pod labels), which are not node labels and are not compared."""
 
-    labels = {
-        entry.split(" : ", 1)[0]: entry.split(" : ", 1)[1]
-        for entry in _attributes(archive, name)["NodeLabels"].split("|")
-        if " : " in entry
-    }
-    actual = _spec_of(oracle, name)["metadata"]["labels"]
-    assert labels["label_kubernetes_io_hostname"] == name
-    assert labels.get("label_topology_kubex_ai_node_group") == actual.get(GROUP_LABEL)
+    collected = label_map(_attributes(archive, name)["NodeLabels"])
+    node_labels = {key: value for key, value in collected.items() if key.startswith("label_")}
+    assert node_labels == _shared_labels(oracle, [name])
 
 
 # --- node_group/ -------------------------------------------------------------
@@ -508,18 +517,32 @@ def test_group_config_hardware(archive, oracle, group):
 
 
 @pytest.mark.parametrize("group", GROUPS)
-def test_group_config_os_name(archive, oracle, group):
-    systems = {_spec_of(oracle, name)["status"]["nodeInfo"]["operatingSystem"] for name in GROUPS[group]}
-    assert len(systems) == 1, f"group members report several operating systems: {sorted(systems)!r}"
-    assert _group_row(archive, "node_group/config.csv", group)["OsName"] == systems.pop()
+def test_group_config_os_and_model(archive, oracle, group):
+    shared = _shared_labels(oracle, GROUPS[group])
+    row = _group_row(archive, "node_group/config.csv", group)
+    assert (row["OsName"], row["HwModel"]) == (
+        shared["label_kubernetes_io_os"],
+        shared["label_node_kubernetes_io_instance_type"],
+    )
+
+
+@pytest.mark.parametrize("group", GROUPS)
+def test_group_attribute_labels(archive, oracle, group):
+    """NodeLabels merges the members' labels, keeping the first value seen (internal/common/common.go:39),
+    so only labels every member shares have a defined value."""
+
+    collected = label_map(_group_row(archive, "node_group/attributes.csv", group)["NodeLabels"])
+    missing = {k: v for k, v in _shared_labels(oracle, GROUPS[group]).items() if collected.get(k) != v}
+    assert not missing, f"shared labels missing or wrong: {missing}"
 
 
 # --- cluster/ ----------------------------------------------------------------
 
 
-def test_cluster_config_names_the_cluster(archive):
-    row = archive.csv("cluster/config.csv").one(Name=CLUSTER)
-    assert row["AuditTime"] == archive.csv("node/config.csv").rows[0]["AuditTime"]
+@pytest.mark.parametrize("path", ["cluster/config.csv", "cluster/attributes.csv"])
+def test_cluster_is_described_once(archive, path):
+    assert [row["Name"] for row in archive.csv(path)] == [CLUSTER]
+
 
 
 def test_cluster_attributes_match_the_cluster(archive, oracle):

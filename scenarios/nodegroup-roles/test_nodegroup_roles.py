@@ -25,6 +25,8 @@ from harness.archive import (
     assert_metric_grid,
     assert_unique_keys,
     expected_timestamps,
+    label_map,
+    prometheus_labels,
 )
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.spec import (
@@ -41,6 +43,8 @@ from harness.spec import (
 
 HERE = Path(__file__).parent
 EXPECT_GROUP = "stack-e2e.kubex.ai/expect-group"
+# The collector reads HwModel from this label (internal/node/node.go:297); Kind sets none of its own.
+INSTANCE_TYPE = "node.kubernetes.io/instance-type"
 WORKLOAD_NAMESPACE = "nodegroup-roles-workload"
 
 # Units and rounding: the collector writes time-series values with %f (six decimal places), so
@@ -59,11 +63,13 @@ SCENARIO = ScenarioSpec(
     name="nodegroup-roles",
     cluster=ClusterSpec(
         # The expect-group label is for the oracle only; the collector does not group on it.
-        control_planes=[Node(labels={**_SYSTEM_NODE, EXPECT_GROUP: "control-plane"})],
+        control_planes=[
+            Node(labels={**_SYSTEM_NODE, EXPECT_GROUP: "control-plane", INSTANCE_TYPE: "e2e.control-plane"})
+        ],
         workers=[
-            Node(labels={EXPECT_GROUP: "infra"}, roles=["infra", "worker"]),
-            Node(labels={EXPECT_GROUP: "gpu"}, roles=["gpu"]),
-            Node(),
+            Node(labels={EXPECT_GROUP: "infra", INSTANCE_TYPE: "e2e.infra"}, roles=["infra", "worker"]),
+            Node(labels={EXPECT_GROUP: "gpu", INSTANCE_TYPE: "e2e.gpu"}, roles=["gpu"]),
+            Node(labels={INSTANCE_TYPE: "e2e.none"}),
         ],
     ),
     stack=StackSpec(
@@ -348,12 +354,32 @@ def test_config_hardware(archive, oracle, group):
     assert int(row["HwTotalMemory"]) == int(oracle.capacity("memory", selector))
 
 
-@pytest.mark.parametrize("group", MEMBERS)
-def test_config_os_name(archive, oracle, group):
-    systems = {
-        node["status"]["nodeInfo"]["operatingSystem"]
+def _shared_labels(oracle, group):
+    """Labels, as Prometheus names them, that every member of the group carries with the same value."""
+
+    labels = [
+        prometheus_labels(node["metadata"]["labels"]).items()
         for node in oracle.primary.nodes
         if node["metadata"]["name"] in MEMBERS[group]
-    }
-    assert len(systems) == 1, f"group members report several operating systems: {sorted(systems)!r}"
-    assert _row(archive, "node_group/config.csv", group)["OsName"] == systems.pop()
+    ]
+    return dict(set.intersection(*map(set, labels)))
+
+
+@pytest.mark.parametrize("group", MEMBERS)
+def test_config_os_and_model(archive, oracle, group):
+    shared = _shared_labels(oracle, group)
+    row = _row(archive, "node_group/config.csv", group)
+    assert (row["OsName"], row["HwModel"]) == (
+        shared["label_kubernetes_io_os"],
+        shared["label_node_kubernetes_io_instance_type"],
+    )
+
+
+@pytest.mark.parametrize("group", MEMBERS)
+def test_attribute_labels(archive, oracle, group):
+    """NodeLabels merges the members' labels, keeping the first value seen (internal/common/common.go:39),
+    so only labels every member shares have a defined value."""
+
+    collected = label_map(_row(archive, "node_group/attributes.csv", group)["NodeLabels"])
+    missing = {k: v for k, v in _shared_labels(oracle, group).items() if collected.get(k) != v}
+    assert not missing, f"shared labels missing or wrong: {missing}"

@@ -309,6 +309,22 @@ def assert_distinct(table: Csv, column: str, expected: Sequence[str]) -> None:
     )
 
 
+def label_map(cell: str) -> dict[str, str]:
+    """A collector label column, "<name> : <value>|..." (internal/common/output.go ConditionalPrintCSVLabelMap).
+
+    A malformed entry raises instead of being skipped.
+    """
+
+    return dict(entry.split(" : ", 1) for entry in cell.split("|") if entry)
+
+
+def prometheus_labels(labels: Mapping[str, str]) -> dict[str, str]:
+    """Kubernetes labels as kube-state-metrics exports them: "label_" plus the name with every character
+    outside [a-zA-Z0-9_] replaced by "_". Empty values are dropped, as Prometheus stores no empty label."""
+
+    return {"label_" + re.sub(r"[^a-zA-Z0-9_]", "_", key): value for key, value in labels.items() if value}
+
+
 
 # --- universal checks --------------------------------------------------------
 
