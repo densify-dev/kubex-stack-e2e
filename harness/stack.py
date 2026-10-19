@@ -35,6 +35,12 @@ def _helm_key_segment(value: str) -> str:
     )
 
 
+def _helm_string(value: str) -> str:
+    """Escape a --set-string value: helm splits unescaped commas into further key=value pairs."""
+
+    return value.replace("\\", "\\\\").replace(",", "\\,")
+
+
 def flatten_values(value: dict[str, Any], prefix: str = "") -> list[tuple[str, object]]:
     flattened: list[tuple[str, object]] = []
     for key, child in value.items():
@@ -161,8 +167,10 @@ def template_args(
     for key, value in values:
         if isinstance(value, list):
             args.extend(["--set-json", f"{key}={json_value(value)}"])
+        elif isinstance(value, str):
+            args.extend(["--set-string", f"{key}={_helm_string(value)}"])
         else:
-            args.extend(["--set-string" if isinstance(value, str) else "--set", f"{key}={scalar(value)}"])
+            args.extend(["--set", f"{key}={scalar(value)}"])
     return args
 
 

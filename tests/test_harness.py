@@ -359,6 +359,12 @@ class HelmValuesTest(unittest.TestCase):
             'prometheus.server.tolerations=[{"effect":"NoSchedule","key":"a,b","operator":"Exists"}]', args
         )
 
+    def test_string_values_escape_commas_and_backslashes(self) -> None:
+        stack = StackSpec(helm_overrides={"a": {"roles": "control-plane,infra", "path": "x\\y"}})
+        args = template_args("demo", stack, ForwarderSpec())
+        self.assertIn(r"a.roles=control-plane\,infra", args)
+        self.assertIn(r"a.path=x\\y", args)
+
     def test_collection_settings_reach_the_chart(self) -> None:
         args = template_args(
             "demo", StackSpec(), ForwarderSpec(collection=Collection(interval="hours", interval_size=2))
