@@ -3,8 +3,8 @@
 Source of truth is collector v4.7.5-beta1 (file names from NewWorkloadMetricHolder in
 internal/common/workload.go and the per-entity writers; headers from the Fprintln literals and
 generateCsvHeaderFormat in internal/common/output.go). Paths the live archive emits were checked
-against it. A column is one of: "key" (identity or time), "test:<path>::<function>" (asserted by
-that test today), "excluded:<reason>", or "unclassified" (no scenario asserts it yet). The runtime
+against it. A column is one of: "key" (identity or time), "test:<path>::<function>[,<path>::<function>...]"
+(asserted by those tests today), "excluded:<reason>", or "unclassified" (no scenario asserts it yet). The runtime
 check fails on missing, renamed or reordered columns and warns on additions; it never requires
 zero "unclassified".
 """
@@ -19,7 +19,15 @@ KEYS = {
     "AuditTime", "MetricTime", "EventTime", "ClusterName", "Name", "NodeName", "NodeGroupName",
     "Namespace", "EntityName", "EntityType", "ContainerName", "HpaName", "RqName", "CrqName",
 }
-_T = "test:scenarios/nodegroup-labels/test_nodegroup_labels.py::"
+_NGL = "scenarios/nodegroup-labels/test_nodegroup_labels.py::"
+_NP = "scenarios/node-pressure/test_node_pressure.py::"
+_NGR = "scenarios/nodegroup-roles/test_nodegroup_roles.py::"
+
+
+def _t(*refs: str) -> str:
+    """Several asserting tests for one column: "test:<ref>,<ref>"."""
+
+    return "test:" + ",".join(refs)
 
 
 def _csv(header: str, **cols: str) -> dict[str, str]:
@@ -39,13 +47,46 @@ _OPENSHIFT = "excluded:OpenShift-only, openshift_clusterresourcequota_* is not a
 _DISK = "excluded:container_fs_usage_bytes is not exported for containerd (cadvisor#2785); Kind runs containerd"
 
 
+_NODE_SERIES = _t(_NP + "test_node_series_match_the_cluster")
+_NODE_CONFIG = {
+    **dict.fromkeys(("HwTotalCpus", "HwTotalPhysicalCpus", "HwCoresPerCpu", "HwThreadsPerCore", "HwTotalMemory"), _t(_NP + "test_node_config_hardware")),
+    "OsName": _t(_NP + "test_node_config_os_name"),
+    **dict.fromkeys(("HwModel", "HwMaxNetworkIoBps"), _t(_NP + "test_node_config_leaves_unknown_hardware_blank")),
+}
+_NODE_ATTRIBUTES = {
+    **dict.fromkeys(("VirtualTechnology", "VirtualDomain", "OsArchitecture", "ProviderId", "K8sVersion"), _t(_NP + "test_node_attributes_identify_the_node")),
+    **dict.fromkeys(("CpuLimit", "CpuRequest", "MemoryLimit", "MemoryRequest"), _t(_NP + "test_node_attribute_requests_and_limits")),
+    **dict.fromkeys(
+        [f"{kind}{name}" for kind in ("Capacity", "Allocatable") for name in ("Pods", "Cpu", "Memory", "EphemeralStorage")],
+        _t(_NP + "test_node_attribute_capacity_and_allocatable"),
+    ),
+    "NodeTaints": _t(_NP + "test_node_attribute_taints"),
+    "NodeLabels": _t(_NP + "test_node_attribute_labels"),
+}
+_GROUP_CONFIG = {
+    "HwTotalCpus": _t(_NGL + "test_config_total_cpus", _NP + "test_group_config_hardware", _NGR + "test_config_hardware"),
+    **dict.fromkeys(("HwTotalPhysicalCpus", "HwCoresPerCpu", "HwThreadsPerCore"), _t(_NP + "test_group_config_hardware", _NGR + "test_config_hardware")),
+    "HwTotalMemory": _t(_NGL + "test_config_total_memory_in_bytes", _NP + "test_group_config_hardware", _NGR + "test_config_hardware"),
+    "OsName": _t(_NGL + "test_config_os_name", _NP + "test_group_config_os_name", _NGR + "test_config_os_name"),
+}
+_GROUP_ATTRIBUTES = {
+    **dict.fromkeys(("VirtualTechnology", "VirtualDomain"), _t(_NGL + "test_attributes_describe_a_node_group", _NP + "test_node_group_membership", _NGR + "test_group_membership")),
+    **dict.fromkeys(("CurrentSize", "CurrentNodes"), _t(_NGL + "test_both_workers_are_in_the_group", _NP + "test_node_group_membership", _NGR + "test_group_membership")),
+    "CpuLimit": _t(_NGL + "test_attribute_cpu_limit", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits"),
+    "CpuRequest": _t(_NGL + "test_attribute_cpu_request", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits"),
+    "MemoryLimit": _t(_NGL + "test_attribute_memory_limit", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits"),
+    "MemoryRequest": _t(_NGL + "test_attribute_memory_request", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits"),
+}
+_GROUP_RESERVATION = _t(_NGL + "test_reservation_percent_matches_the_cluster", _NP + "test_group_reservation_percent_matches_the_cluster", _NGR + "test_reservation_percent_matches_the_cluster")
+
+
 INVENTORY: dict[str, dict[str, str]] = {
-    "cluster/config.csv": _csv("AuditTime,Name"),
-    "cluster/attributes.csv": _csv("Name,VirtualTechnology,VirtualDomain,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,K8sVersion"),
-    "cluster/cpu_requests.csv": _csv(CL + "CpuRequests"),
-    "cluster/cpu_reservation_percent.csv": _csv(CL + "CpuReservationPercent"),
-    "cluster/memory_requests.csv": _csv(CL + "MemoryRequests"),
-    "cluster/memory_reservation_percent.csv": _csv(CL + "MemoryReservationPercent"),
+    "cluster/config.csv": _csv("AuditTime,Name", AuditTime=_t(_NP + "test_cluster_config_names_the_cluster")),
+    "cluster/attributes.csv": _csv("Name,VirtualTechnology,VirtualDomain,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,K8sVersion", **dict.fromkeys(("VirtualTechnology", "VirtualDomain", "CpuLimit", "CpuRequest", "MemoryLimit", "MemoryRequest", "K8sVersion"), _t(_NP + "test_cluster_attributes_match_the_cluster"))),
+    "cluster/cpu_requests.csv": _csv(CL + "CpuRequests", CpuRequests=_t(_NP + "test_cluster_requests_match_the_cluster")),
+    "cluster/cpu_reservation_percent.csv": _csv(CL + "CpuReservationPercent", CpuReservationPercent=_t(_NP + "test_cluster_reservation_percent_matches_the_cluster")),
+    "cluster/memory_requests.csv": _csv(CL + "MemoryRequests", MemoryRequests=_t(_NP + "test_cluster_requests_match_the_cluster")),
+    "cluster/memory_reservation_percent.csv": _csv(CL + "MemoryReservationPercent", MemoryReservationPercent=_t(_NP + "test_cluster_reservation_percent_matches_the_cluster")),
     "cluster/gpu_requests.csv": _csv(CL + "GpuRequests"),
     "cluster/gpu_reservation_percent.csv": _csv(CL + "GpuReservationPercent"),
     "cluster/cpu_utilization.csv": _csv(CL + "CpuUtilization"),
@@ -63,20 +104,20 @@ INVENTORY: dict[str, dict[str, str]] = {
     "cluster/net_received_packets.csv": _csv(CL + "NetReceivedPackets"),
     "cluster/net_sent_packets.csv": _csv(CL + "NetSentPackets"),
     "cluster/net_total_packets.csv": _csv(CL + "NetTotalPackets"),
-    "node/config.csv": _csv("AuditTime,ClusterName,NodeName,HwModel,OsName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwMaxNetworkIoBps"),
-    "node/attributes.csv": _csv("ClusterName,NodeName,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,OsArchitecture,NetworkSpeed,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,CapacityPods,CapacityCpu,CapacityMemory,CapacityGpu,CapacityEphemeralStorage,CapacityHugePages,AllocatablePods,AllocatableCpu,AllocatableMemory,AllocatableGpu,AllocatableEphemeralStorage,AllocatableHugePages,MemoryTotalBytes,GpuTotal,GpuMemoryTotal,GpuReplicas,ProviderId,K8sVersion,NodeLabels,GpuLabels,NodeTaints,GpuVendor,GpuModel,GpuSharingStrategy,GpuMpsCapable,GpuVgpuPresent,GpuMigCapable,GpuMigStrategy"),
-    "node/cpu_limit.csv": _csv(NO + "CpuLimit"),
-    "node/cpu_request.csv": _csv(NO + "CpuRequest"),
-    "node/memory_limit.csv": _csv(NO + "MemoryLimit"),
-    "node/memory_request.csv": _csv(NO + "MemoryRequest"),
+    "node/config.csv": _csv("AuditTime,ClusterName,NodeName,HwModel,OsName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwMaxNetworkIoBps", **_NODE_CONFIG),
+    "node/attributes.csv": _csv("ClusterName,NodeName,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,OsArchitecture,NetworkSpeed,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,CapacityPods,CapacityCpu,CapacityMemory,CapacityGpu,CapacityEphemeralStorage,CapacityHugePages,AllocatablePods,AllocatableCpu,AllocatableMemory,AllocatableGpu,AllocatableEphemeralStorage,AllocatableHugePages,MemoryTotalBytes,GpuTotal,GpuMemoryTotal,GpuReplicas,ProviderId,K8sVersion,NodeLabels,GpuLabels,NodeTaints,GpuVendor,GpuModel,GpuSharingStrategy,GpuMpsCapable,GpuVgpuPresent,GpuMigCapable,GpuMigStrategy", **_NODE_ATTRIBUTES),
+    "node/cpu_limit.csv": _csv(NO + "CpuLimit", CpuLimit=_NODE_SERIES),
+    "node/cpu_request.csv": _csv(NO + "CpuRequest", CpuRequest=_NODE_SERIES),
+    "node/memory_limit.csv": _csv(NO + "MemoryLimit", MemoryLimit=_NODE_SERIES),
+    "node/memory_request.csv": _csv(NO + "MemoryRequest", MemoryRequest=_NODE_SERIES),
     "node/gpu_limit.csv": _csv(NO + "GpuLimit"),
     "node/gpu_request.csv": _csv(NO + "GpuRequest"),
     "node/ephemeral_storage_limit.csv": _csv(NO + "EphemeralStorageLimit"),
     "node/ephemeral_storage_request.csv": _csv(NO + "EphemeralStorageRequest"),
-    "node/cpu_reservation_percent.csv": _csv(NO + "CpuReservationPercent"),
-    "node/memory_reservation_percent.csv": _csv(NO + "MemoryReservationPercent"),
+    "node/cpu_reservation_percent.csv": _csv(NO + "CpuReservationPercent", CpuReservationPercent=_NODE_SERIES),
+    "node/memory_reservation_percent.csv": _csv(NO + "MemoryReservationPercent", MemoryReservationPercent=_NODE_SERIES),
     "node/ephemeral_storage_reservation_percent.csv": _csv(NO + "EphemeralStorageReservationPercent"),
-    "node/pod_count.csv": _csv(NO + "PodCount"),
+    "node/pod_count.csv": _csv(NO + "PodCount", PodCount=_NODE_SERIES),
     "node/ephemeral_storage_usage_bytes.csv": _csv(NO + "EphemeralStorageUsageBytes"),
     "node/ephemeral_storage_usage_utilization.csv": _csv(NO + "EphemeralStorageUsageUtilization"),
     "node/gpu_utilization_avg.csv": _csv(NO + "GpuUtilizationAvg"),
@@ -105,13 +146,13 @@ INVENTORY: dict[str, dict[str, str]] = {
     "node/net_received_packets.csv": _csv(NO + "NetReceivedPackets"),
     "node/net_sent_packets.csv": _csv(NO + "NetSentPackets"),
     "node/net_total_packets.csv": _csv(NO + "NetTotalPackets"),
-    "node_group/config.csv": _csv("AuditTime,ClusterName,NodeGroupName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwModel,OsName", HwTotalCpus=_T + "test_config_total_cpus", OsName=_T + "test_config_os_name"),
-    "node_group/attributes.csv": _csv("ClusterName,NodeGroupName,VirtualTechnology,VirtualDomain,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,CurrentSize,CurrentNodes,NodeLabels", VirtualTechnology=_T + "test_attributes_describe_a_node_group", CpuLimit=_T + "test_attribute_cpu_limit", CpuRequest=_T + "test_attribute_cpu_request", MemoryLimit=_T + "test_attribute_memory_limit", MemoryRequest=_T + "test_attribute_memory_request", VirtualDomain=_T + "test_attributes_describe_a_node_group", CurrentSize=_T + "test_both_workers_are_in_the_group", CurrentNodes=_T + "test_both_workers_are_in_the_group"),
-    "node_group/current_size.csv": _csv(NG + "CurrentSize", CurrentSize=_T + "test_current_size_holds_for_every_sample"),
-    "node_group/cpu_requests.csv": _csv(NG + "CpuRequests", CpuRequests=_T + "test_requests_match_the_cluster"),
-    "node_group/cpu_reservation_percent.csv": _csv(NG + "CpuReservationPercent", CpuReservationPercent=_T + "test_reservation_percent_matches_the_cluster"),
-    "node_group/memory_requests.csv": _csv(NG + "MemoryRequests", MemoryRequests=_T + "test_requests_match_the_cluster"),
-    "node_group/memory_reservation_percent.csv": _csv(NG + "MemoryReservationPercent", MemoryReservationPercent=_T + "test_reservation_percent_matches_the_cluster"),
+    "node_group/config.csv": _csv("AuditTime,ClusterName,NodeGroupName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwModel,OsName", **_GROUP_CONFIG),
+    "node_group/attributes.csv": _csv("ClusterName,NodeGroupName,VirtualTechnology,VirtualDomain,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,CurrentSize,CurrentNodes,NodeLabels", **_GROUP_ATTRIBUTES),
+    "node_group/current_size.csv": _csv(NG + "CurrentSize", CurrentSize=_t(_NGL + "test_current_size_holds_for_every_sample", _NP + "test_current_size_holds_for_every_sample", _NGR + "test_current_size_holds_for_every_sample")),
+    "node_group/cpu_requests.csv": _csv(NG + "CpuRequests", CpuRequests=_t(_NGL + "test_requests_match_the_cluster", _NP + "test_group_requests_match_the_cluster", _NGR + "test_requests_match_the_cluster")),
+    "node_group/cpu_reservation_percent.csv": _csv(NG + "CpuReservationPercent", CpuReservationPercent=_GROUP_RESERVATION),
+    "node_group/memory_requests.csv": _csv(NG + "MemoryRequests", MemoryRequests=_t(_NGL + "test_requests_match_the_cluster", _NP + "test_group_requests_match_the_cluster", _NGR + "test_requests_match_the_cluster")),
+    "node_group/memory_reservation_percent.csv": _csv(NG + "MemoryReservationPercent", MemoryReservationPercent=_GROUP_RESERVATION),
     "node_group/gpu_requests.csv": _csv(NG + "GpuRequests"),
     "node_group/gpu_reservation_percent.csv": _csv(NG + "GpuReservationPercent"),
     "node_group/cpu_utilization.csv": _csv(NG + "CpuUtilization"),

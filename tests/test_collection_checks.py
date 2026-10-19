@@ -110,10 +110,10 @@ class CoverageInventoryTest(unittest.TestCase):
                     value in ("key", "unclassified") or value.startswith(("test:", "excluded:")), f"{path}:{column}"
                 )
                 if value.startswith("test:"):
-                    refs.add(value)
+                    refs.update(value[len("test:"):].split(","))
         self.assertTrue(refs)
         for ref in refs:
-            file, _, function = ref[len("test:"):].partition("::")
+            file, _, function = ref.partition("::")
             self.assertRegex((ROOT / file).read_text(), rf"(?m)^def {re.escape(function)}\(", ref)
 
     def test_check_archive_cases(self) -> None:
