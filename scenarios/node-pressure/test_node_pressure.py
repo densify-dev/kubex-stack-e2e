@@ -11,6 +11,7 @@ collected and not used.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
@@ -44,7 +45,8 @@ GROUP_LABEL = "topology.kubex.ai/node-group"
 INSTANCE_TYPE = "node.kubernetes.io/instance-type"
 WORKLOAD_NAMESPACE = "node-pressure-workload"
 DEDICATED = Taint(key="stack-e2e.kubex.ai/dedicated", value="pressure", effect="NoSchedule")
-RESERVED = {"system-reserved": "cpu=1,memory=1Gi"}
+# Half a core, so allocatable CPU is fractional (5.5 of 6) and must not be rounded to whole cores.
+RESERVED = {"system-reserved": "cpu=500m,memory=1Gi"}
 
 # Units and rounding: the collector writes time-series values with %f (six decimal places), so
 # the worst case error on a raw value is 5e-7. Node and cluster requests and limits are in mcores
@@ -236,14 +238,14 @@ def _grid(archive):
 
 
 def test_reserved_workers_have_less_allocatable_than_capacity(oracle):
-    """pool-a gives up exactly 1 CPU and 1Gi more than the unreserved pool-b worker (which only loses
+    """pool-a gives up exactly half a CPU and 1Gi more than the unreserved pool-b worker (which only loses
     the kubelet's default memory eviction threshold)."""
 
     def lost(name, resource):
         return _status(oracle, name, "capacity", resource) - _status(oracle, name, "allocatable", resource)
 
     for name in GROUPS["pool-a"]:
-        assert lost(name, "cpu") == pytest.approx(1)
+        assert lost(name, "cpu") == pytest.approx(0.5)
         assert lost(name, "memory") - lost(GROUPS["pool-b"][0], "memory") == pytest.approx(2**30)
     assert lost(GROUPS["pool-b"][0], "cpu") == 0
 
@@ -376,7 +378,7 @@ def test_node_attribute_requests_and_limits(archive, oracle, name, column, calcu
 
 @pytest.mark.parametrize("name", NODES)
 def test_node_attribute_capacity_and_allocatable(archive, oracle, name):
-    """Counts and CPU in whole units, memory and ephemeral storage in bytes."""
+    """Exactly what Kubernetes reports: pods as a count, CPU in cores, memory and ephemeral storage in bytes."""
 
     row = _attributes(archive, name)
     for field, prefix in (("capacity", "Capacity"), ("allocatable", "Allocatable")):
@@ -386,8 +388,8 @@ def test_node_attribute_capacity_and_allocatable(archive, oracle, name):
             ("memory", "Memory"),
             ("ephemeral-storage", "EphemeralStorage"),
         ):
-            expected = int(_status(oracle, name, field, resource))
-            assert int(row[prefix + column]) == expected, f"{prefix}{column} of {name}"
+            expected = quantity(_spec_of(oracle, name)["status"][field][resource], f"{name} {field} {resource}")
+            assert Decimal(row[prefix + column]) == expected, f"{prefix}{column} of {name}"
 
 
 @pytest.mark.parametrize("name", NODES)
