@@ -28,7 +28,7 @@ on:
         description: Collector image override (blank uses the chart default)
         required: false
         type: string
-        default: densify/container-optimization-data-forwarder:4.7.5-beta1
+        default: ""
 
 concurrency:
   group: kind-functional-${{ github.ref }}
@@ -52,8 +52,7 @@ jobs:
       scenarios: ${{ steps.scenarios.outputs.scenarios }}
     env:
       CHART_OVERRIDE: ${{ inputs.stack_chart_version }}
-      # The chart default (:4) is 4.7.4 until 4.7.5 ships; pushes test the 4.7.5 beta.
-      COLLECTOR_OVERRIDE: ${{ github.event_name == 'push' && 'densify/container-optimization-data-forwarder:4.7.5-beta1' || inputs.collector_image }}
+      COLLECTOR_OVERRIDE: ${{ inputs.collector_image }}
       SCENARIO: ${{ inputs.scenario }}
     steps:
       - name: Check out repository

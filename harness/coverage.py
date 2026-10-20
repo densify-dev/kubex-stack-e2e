@@ -1,6 +1,6 @@
 """Coverage inventory: every CSV the collector can emit, its exact header, and what covers each column.
 
-Source of truth is collector v4.7.5-beta1 (file names from NewWorkloadMetricHolder in
+Source of truth is collector v4.7.6 (file names from NewWorkloadMetricHolder in
 internal/common/workload.go and the per-entity writers; headers from the Fprintln literals and
 generateCsvHeaderFormat in internal/common/output.go). Paths the live archive emits were checked
 against it. A column is one of: "key" (identity or time), "test:<path>::<function>[,<path>::<function>...]"

@@ -330,7 +330,7 @@ def prometheus_labels(labels: Mapping[str, str]) -> dict[str, str]:
 
 
 def expected_timestamps(audit_time: str, collection: Collection) -> list[str]:
-    """The MetricTime grid the collector emits for ``audit_time`` and ``collection`` (collector v4.7.5-beta1).
+    """The MetricTime grid the collector emits for ``audit_time`` and ``collection`` (collector v4.7.6).
 
     ``AuditTime`` is "now" truncated to the minute (internal/common/common.go:21-35). Each time series
     is one Prometheus range query over ``[AuditTime - Interval, AuditTime]`` with ``step = sample_rate``
@@ -342,7 +342,7 @@ def expected_timestamps(audit_time: str, collection: Collection) -> list[str]:
     """
 
     if collection.interval not in ("minutes", "hours"):
-        raise ValueError(f"collector v4.7.5-beta1 does not support interval {collection.interval!r}")
+        raise ValueError(f"collector v4.7.6 does not support interval {collection.interval!r}")
     interval = timedelta(seconds=collection.interval_size * INTERVAL_SECONDS[collection.interval])
     step = timedelta(minutes=collection.sample_rate)
     start = datetime.fromisoformat(audit_time).astimezone(timezone.utc) - interval
