@@ -24,6 +24,7 @@ _LABEL_NAME = re.compile(r"^[A-Za-z0-9](?:[-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$")
 _LABEL_PREFIX = re.compile(r"^[a-z0-9](?:[-a-z0-9.]{0,251}[a-z0-9])?$")
 _LABEL_VALUE = re.compile(r"^[A-Za-z0-9]([-A-Za-z0-9_.]{0,61}[A-Za-z0-9])?$|^$")
 _KUBERNETES_NAME = re.compile(r"^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$")
+_WHOLE_NUMBER = re.compile(r"^[0-9]+$")
 
 
 class SpecError(ValueError):
@@ -39,6 +40,15 @@ def _check_labels(labels: Mapping[str, str], where: str) -> None:
             raise SpecError(f"{where}: invalid label prefix {parts[0]!r}")
         if not _LABEL_VALUE.fullmatch(str(value)):
             raise SpecError(f"{where}: invalid label value {value!r} for {key!r}")
+
+
+def _check_extended_resources(resources: Mapping[str, str], where: str) -> None:
+    for name, value in resources.items():
+        prefix, slash, base = str(name).partition("/")
+        if not slash or not _LABEL_PREFIX.fullmatch(prefix) or not _LABEL_NAME.fullmatch(base):
+            raise SpecError(f"{where}: invalid extended resource name {name!r}")
+        if not _WHOLE_NUMBER.fullmatch(str(value)):
+            raise SpecError(f"{where}: extended resource {name!r} must be a whole number, got {value!r}")
 
 
 def _check_kubernetes_name(value: str, where: str) -> None:
@@ -66,9 +76,12 @@ class Node:
     roles: Sequence[str] = ()
     taints: Sequence[Taint] = ()
     kubelet: Mapping[str, str] = field(default_factory=dict)
+    # Extended resources patched into status.capacity, e.g. {"nvidia.com/gpu": "4"}; the kubelet mirrors them into allocatable.
+    extended_resources: Mapping[str, str] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         _check_labels(self.labels, "node.labels")
+        _check_extended_resources(self.extended_resources, "node.extended_resources")
 
 
 @dataclass(frozen=True)

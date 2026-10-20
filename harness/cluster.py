@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -68,7 +69,7 @@ def delete(cluster_name: str, repo_root: Path) -> None:
 
 
 def configure_nodes(cluster: ClusterSpec, cluster_name: str, repo_root: Path) -> None:
-    """Apply labels, roles, and taints to the nodes kind just created."""
+    """Apply labels, roles, taints and extended resources to the nodes kind just created."""
 
     for node_name, (_, node) in zip(cluster.node_names(cluster_name), cluster.nodes()):
         for key, value in node.labels.items():
@@ -77,3 +78,12 @@ def configure_nodes(cluster: ClusterSpec, cluster_name: str, repo_root: Path) ->
             kubectl(["label", "node", node_name, f"node-role.kubernetes.io/{role_name}=", "--overwrite"], repo_root)
         for taint in node.taints:
             kubectl(["taint", "node", node_name, taint.assignment(), "--overwrite"], repo_root)
+        if node.extended_resources:
+            capacity = {name: str(value) for name, value in node.extended_resources.items()}
+            kubectl(["patch", "node", node_name, "--subresource=status", "--type=merge",
+                     "-p", json.dumps({"status": {"capacity": capacity}})], repo_root)
+            # The kubelet copies capacity into allocatable on its next status sync; wait so pods can schedule.
+            for name, value in capacity.items():
+                field = name.replace(".", "\\.")
+                kubectl(["wait", f"node/{node_name}", f"--for=jsonpath={{.status.allocatable.{field}}}={value}",
+                         "--timeout=120s"], repo_root)

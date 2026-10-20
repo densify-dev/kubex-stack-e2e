@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: gtf-workload}
+---
+# Two whole GPUs per the fixture, but nothing is requested from Kubernetes: this path reads the exporter.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: trainer, namespace: gtf-workload}
+spec:
+  serviceName: trainer
+  replicas: 1
+  selector: {matchLabels: {app: trainer}}
+  template:
+    metadata: {labels: {app: trainer}}
+    spec:
+      nodeSelector: {kubernetes.io/hostname: kubex-e2e-gpu-telemetry-fixtures-worker}
+      containers:
+        - name: train
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+---
+# Two replicas, so the fixture can give them different values (infer-0 and infer-1).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: infer, namespace: gtf-workload}
+spec:
+  serviceName: infer
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector: {matchLabels: {app: infer}}
+  template:
+    metadata: {labels: {app: infer}}
+    spec:
+      nodeSelector: {kubernetes.io/hostname: kubex-e2e-gpu-telemetry-fixtures-worker}
+      containers:
+        - name: serve
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests: {cpu: 50m, memory: 32Mi}
+            limits: {cpu: 100m, memory: 64Mi}

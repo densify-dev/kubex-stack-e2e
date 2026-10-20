@@ -9,6 +9,7 @@ rewritten against ``harness.archive``.
 from __future__ import annotations
 
 import base64
+import copy
 import io
 import json
 import os
@@ -591,6 +592,14 @@ class SpecValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(SpecError, "invalid label name"):
             Node(labels={"a/b/c": "value"})
 
+    def test_invalid_extended_resource_is_rejected(self) -> None:
+        with self.assertRaisesRegex(SpecError, "invalid extended resource name"):
+            Node(extended_resources={"gpu": "1"})
+        for value in ("1.5", "-1"):
+            with self.assertRaisesRegex(SpecError, "must be a whole number"):
+                Node(extended_resources={"nvidia.com/gpu": value})
+        Node(extended_resources={"nvidia.com/gpu": "0"})
+
     def test_fixture_service_requires_metrics(self) -> None:
         with self.assertRaisesRegex(SpecError, "at least one metric"):
             FixtureService(name="f", metrics=[])
@@ -653,6 +662,49 @@ class ClusterLifecycleTest(unittest.TestCase):
 
         create.assert_not_called()
         delete.assert_not_called()
+
+    def test_extended_resources_are_patched_and_awaited_before_the_stack(self) -> None:
+        scenario = ScenarioSpec(
+            name="demo",
+            cluster=ClusterSpec(
+                node_image="i",
+                workers=[Node(labels={"g": "x"}, extended_resources={"nvidia.com/gpu": "4"}), Node()],
+            ),
+        )
+        calls: list[list[str]] = []
+
+        def record(args: list[str], *_: object, **__: object) -> str:
+            calls.append(args)
+            return ""
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            with (
+                patch.object(run_mod.cluster, "assert_absent"),
+                patch.object(run_mod.cluster, "create"),
+                patch.object(run_mod.cluster, "delete"),
+                patch("harness.cluster.kubectl", record),
+                patch.object(run_mod.receiver, "deploy", side_effect=HarnessError("stop after nodes")),
+                patch.object(run_mod.artifacts_mod, "collect"),
+            ):
+                with self.assertRaisesRegex(HarnessError, "stop after nodes"):
+                    with run_mod.execute(scenario, root, root, root / "artifacts"):
+                        pass
+
+        self.assertEqual(
+            calls,
+            [
+                ["label", "node", "kubex-e2e-demo-worker", "g=x", "--overwrite"],
+                [
+                    "patch", "node", "kubex-e2e-demo-worker", "--subresource=status", "--type=merge",
+                    "-p", '{"status": {"capacity": {"nvidia.com/gpu": "4"}}}',
+                ],
+                [
+                    "wait", "node/kubex-e2e-demo-worker",
+                    "--for=jsonpath={.status.allocatable.nvidia\\.com/gpu}=4", "--timeout=120s",
+                ],
+            ],
+        )
 
     def test_partial_creation_is_cleaned_up(self) -> None:
         scenario = ScenarioSpec(
@@ -893,6 +945,18 @@ class OracleTest(unittest.TestCase):
         self.assertAlmostEqual(oracle.limits("cpu", {"group": "workers"}), 0.8)
         self.assertEqual(oracle.limits("memory", {"group": "workers"}), 160 * 1024**2)
         self.assertEqual(oracle.evidence[0]["limits"], 0.8)
+
+    def test_a_resource_a_node_does_not_advertise_counts_as_zero(self) -> None:
+        nodes = copy.deepcopy(self.NODES)
+        nodes[0]["status"]["capacity"]["nvidia.com/gpu"] = "4"
+        nodes[0]["status"]["allocatable"]["nvidia.com/gpu"] = "4"
+        oracle = Oracle([Snapshot("only", nodes, self.PODS)])
+        self.assertEqual(oracle.capacity("nvidia.com/gpu", {"group": "workers"}), 4.0)
+        self.assertEqual(oracle.requests("nvidia.com/gpu", {"group": "system"}), 0.0)
+        self.assertEqual(oracle.evidence[-1]["allocatable"], 0.0)
+        self.assertEqual(oracle.evidence[-1]["unit"], "count")
+        with self.assertRaisesRegex(HarnessError, "invalid Kubernetes quantity"):
+            oracle.capacity("cpu", {"group": "system"})
 
     def test_capacity_and_pod_count(self) -> None:
         oracle = self._oracle()

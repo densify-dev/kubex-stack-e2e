@@ -138,18 +138,16 @@ def _live_containers(snapshot: Snapshot, names: set[str]) -> Iterator[tuple[tupl
 
 
 def _node_total(nodes: list[dict[str, Any]], field_name: str, resource: str) -> float:
-    return float(
-        sum(
-            (
-                quantity(
-                    node.get("status", {}).get(field_name, {}).get(resource),
-                    f"node {node.get('metadata', {}).get('name', '<unknown>')} {field_name} {resource}",
-                )
-                for node in nodes
-            ),
-            Decimal(0),
+    total = Decimal(0)
+    for node in nodes:
+        amounts = node.get("status", {}).get(field_name, {})
+        # a node that does not advertise an extended resource has none of it
+        if "/" in resource and resource not in amounts:
+            continue
+        total += quantity(
+            amounts.get(resource), f"node {node.get('metadata', {}).get('name', '<unknown>')} {field_name} {resource}"
         )
-    )
+    return float(total)
 
 
 def _compute(snapshot: Snapshot, selector: Mapping[str, str], resource: str | None, kind: str) -> dict[str, Any]:
@@ -172,7 +170,7 @@ def _compute(snapshot: Snapshot, selector: Mapping[str, str], resource: str | No
         kind: total,
         "allocatable": _node_total(nodes, "allocatable", resource),
         "resource": resource,
-        "unit": "cores" if resource == "cpu" else "bytes",
+        "unit": "cores" if resource == "cpu" else "count" if resource and "/" in resource else "bytes",
     }
 
 

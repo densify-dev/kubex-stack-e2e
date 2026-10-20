@@ -380,7 +380,9 @@ def assert_metric_grid(
 
 
 # A failed query is logged as "... query=<q> message=<err>" (collector internal/common/result.go:34,42);
-# the "no data" skip is the same line with a different <err> (filter.go:268-269) and must pass. The
+# the "no data" skip is the same line with a different <err> (filter.go:268-269) and must pass. Queries of
+# workload files are the exception: their failures are not logged (common/workload.go:255-261 skips a result
+# whose query failed as empty), so test_expected_files is the guard for those. The
 # markers are the prometheus/client_golang error types, transport errors from net/http and
 # go-retryablehttp, and the collector's own FatalError messages that stop a run.
 QUERY_FAILURES = (
