@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: cadvisor-workload}
+---
+# Two replicas, so pod names burst-0 and burst-1 are known before the pods exist and the
+# fixture can name them; two containers, so values must stay per container.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: burst, namespace: cadvisor-workload}
+spec:
+  serviceName: burst
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector: {matchLabels: {app: burst}}
+  template:
+    metadata: {labels: {app: burst}}
+    spec:
+      containers:
+        - {name: app, image: registry.k8s.io/pause:3.9, imagePullPolicy: IfNotPresent}
+        - {name: sidecar, image: registry.k8s.io/pause:3.9, imagePullPolicy: IfNotPresent}
+---
+# A bare pod takes the collector's unowned path (EntityType Pod).
+apiVersion: v1
+kind: Pod
+metadata: {name: solo, namespace: cadvisor-workload}
+spec:
+  containers:
+    - {name: app, image: registry.k8s.io/pause:3.9, imagePullPolicy: IfNotPresent}

@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: hpa-orphans-workload
+---
+# Two scale targets with one idle container each. 2 replicas is inside [min, max] of their HPAs,
+# and without a metrics API the HPA controller never rescales them.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web-a, namespace: hpa-orphans-workload}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: web-a}}
+  template:
+    metadata: {labels: {app: web-a}}
+    spec:
+      containers:
+        - {name: app, image: registry.k8s.io/pause:3.9, imagePullPolicy: IfNotPresent}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web-b, namespace: hpa-orphans-workload}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: web-b}}
+  template:
+    metadata: {labels: {app: web-b}}
+    spec:
+      containers:
+        - {name: app, image: registry.k8s.io/pause:3.9, imagePullPolicy: IfNotPresent}
+---
+# hpa-a: CPU utilization and memory average value
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-a
+  namespace: hpa-orphans-workload
+  labels: {stack-e2e.kubex.ai/hpa: a}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: web-a}
+  minReplicas: 2
+  maxReplicas: 4
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: Utilization, averageUtilization: 50}}
+    - type: Resource
+      resource: {name: memory, target: {type: AverageValue, averageValue: 64Mi}}
+---
+# hpa-b: CPU average value and memory utilization (the other two target types)
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-b
+  namespace: hpa-orphans-workload
+  labels: {stack-e2e.kubex.ai/hpa: b}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: web-b}
+  minReplicas: 2
+  maxReplicas: 5
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: AverageValue, averageValue: 100m}}
+    - type: Resource
+      resource: {name: memory, target: {type: Utilization, averageUtilization: 60}}
+---
+# ghost-a and ghost-b: their Deployments never exist, so the collector cannot classify them
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ghost-a
+  namespace: hpa-orphans-workload
+  labels: {stack-e2e.kubex.ai/hpa: ghost-a}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: ghost}
+  minReplicas: 1
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: Utilization, averageUtilization: 70}}
+    - type: Resource
+      resource: {name: memory, target: {type: AverageValue, averageValue: 128Mi}}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ghost-b
+  namespace: hpa-orphans-workload
+  labels: {stack-e2e.kubex.ai/hpa: ghost-b}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: phantom}
+  minReplicas: 3
+  maxReplicas: 6
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: AverageValue, averageValue: 200m}}
+    - type: Resource
+      resource: {name: memory, target: {type: Utilization, averageUtilization: 80}}

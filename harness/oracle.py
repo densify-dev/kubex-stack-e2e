@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Iterator, Mapping
+from typing import Any, Iterator, Mapping, Sequence
 
 from harness.command import HarnessError, kubectl_json
 
@@ -62,20 +62,25 @@ class Snapshot:
     label: str
     nodes: list[dict[str, Any]]
     pods: list[dict[str, Any]]
+    # Extra kubectl resources the scenario asked for, keyed by resource name.
+    objects: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
-def take_snapshot(label: str, repo_root: Path) -> Snapshot:
+def take_snapshot(label: str, repo_root: Path, resources: Sequence[str] = ()) -> Snapshot:
     payloads: dict[str, list[dict[str, Any]]] = {}
-    for resource in ("nodes", "pods"):
-        args = ["get", resource, "-o", "json"]
-        if resource == "pods":
-            args.insert(1, "-A")
+    for resource in ("nodes", "pods", *resources):
+        args = ["get", resource, "-o", "json"] if resource == "nodes" else ["get", resource, "-A", "-o", "json"]
         payload = kubectl_json(args, repo_root)
         items = payload.get("items") if isinstance(payload, dict) else None
         if not isinstance(items, list) or any(not isinstance(item, dict) for item in items):
             raise HarnessError(f"kubectl returned invalid {resource} item list")
         payloads[resource] = items
-    return Snapshot(label=label, nodes=payloads["nodes"], pods=payloads["pods"])
+    return Snapshot(
+        label=label,
+        nodes=payloads["nodes"],
+        pods=payloads["pods"],
+        objects={resource: payloads[resource] for resource in resources},
+    )
 
 
 def _container_amount(container: dict[str, Any], kind: str, resource: str, where: str) -> Decimal:

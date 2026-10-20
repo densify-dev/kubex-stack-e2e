@@ -1,0 +1,162 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cr-workload
+  labels: {stack-e2e.kubex.ai/purpose: container-resources}
+  annotations: {stack-e2e.kubex.ai/note: quota-and-owners}
+---
+# Requests are quota'd under both keys, so Kubernetes reports the used CPU under "cpu" and "requests.cpu".
+apiVersion: v1
+kind: ResourceQuota
+metadata: {name: cr-quota, namespace: cr-workload}
+spec:
+  hard:
+    cpu: "4"
+    requests.cpu: "4"
+    limits.cpu: 8008m
+    requests.memory: 2Gi
+    limits.memory: 4Gi
+    pods: "20"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web, namespace: cr-workload}
+spec:
+  replicas: 2
+  selector: {matchLabels: {stack-e2e.kubex.ai/entity: web}}
+  template:
+    metadata: {labels: {stack-e2e.kubex.ai/entity: web}}
+    spec:
+      nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker}
+      initContainers:
+        - name: setup            # standard init container: runs once, never reported
+          image: python@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "exit 0"]
+          resources: {requests: {cpu: 125m, memory: 32Mi}, limits: {cpu: 250m, memory: 64Mi}}
+        - name: proxy            # native sidecar
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          restartPolicy: Always
+          resources: {requests: {cpu: 125m, memory: 64Mi}, limits: {cpu: 250m, memory: 128Mi}}
+      containers:
+        - name: app
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources: {requests: {cpu: 250m, memory: 128Mi}, limits: {cpu: 500m, memory: 256Mi}}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: db, namespace: cr-workload}
+spec:
+  serviceName: db
+  replicas: 1
+  selector: {matchLabels: {stack-e2e.kubex.ai/entity: db}}
+  template:
+    metadata: {labels: {stack-e2e.kubex.ai/entity: db}}
+    spec:
+      nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker}
+      containers:
+        - name: db               # 1001m: Go int(1.001*1000) is 1000
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources: {requests: {cpu: 1001m, memory: 256Mi}, limits: {cpu: 1001m, memory: 256Mi}}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata: {name: agent, namespace: cr-workload}
+spec:
+  selector: {matchLabels: {stack-e2e.kubex.ai/entity: agent}}
+  template:
+    metadata: {labels: {stack-e2e.kubex.ai/entity: agent}}
+    spec:
+      nodeSelector: {topology.kubex.ai/node-group: cr-workers}
+      containers:
+        - name: agent
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources: {requests: {cpu: 125m, memory: 32Mi}, limits: {cpu: 250m, memory: 64Mi}}
+---
+# Two pods active at once: the collector's Job size requires exactly one active pod.
+apiVersion: batch/v1
+kind: Job
+metadata: {name: batch, namespace: cr-workload}
+spec:
+  parallelism: 2
+  completions: 2
+  template:
+    metadata: {labels: {stack-e2e.kubex.ai/entity: batch}}
+    spec:
+      restartPolicy: Never
+      nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker}
+      containers:
+        - name: work
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources: {requests: {cpu: 125m, memory: 32Mi}, limits: {cpu: 250m, memory: 64Mi}}
+---
+# The first job never finishes and Forbid blocks the next, so exactly one pod runs.
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: tick, namespace: cr-workload}
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        metadata: {labels: {stack-e2e.kubex.ai/entity: tick}}
+        spec:
+          restartPolicy: Never
+          nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker}
+          containers:
+            - name: tick
+              image: registry.k8s.io/pause:3.9
+              imagePullPolicy: IfNotPresent
+              resources: {requests: {cpu: 125m, memory: 32Mi}, limits: {cpu: 250m, memory: 64Mi}}
+---
+# Exits 42 on its first start, then runs: restartCount is exactly 1.
+apiVersion: v1
+kind: Pod
+metadata: {name: solo, namespace: cr-workload, labels: {stack-e2e.kubex.ai/entity: solo}}
+spec:
+  nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker}
+  containers:
+    - name: solo
+      image: python@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c", "if [ -e /state/crashed ]; then exec sleep infinity; fi; touch /state/crashed; exit 42"]
+      volumeMounts: [{name: state, mountPath: /state}]
+      resources: {requests: {cpu: 125m, memory: 64Mi}, limits: {cpu: 250m, memory: 128Mi}}
+  volumes: [{name: state, emptyDir: {}}]
+---
+# Completed before the window and kept (no TTL): must not count toward node, group or cluster totals.
+apiVersion: batch/v1
+kind: Job
+metadata: {name: done, namespace: cr-workload}
+spec:
+  backoffLimit: 0
+  template:
+    metadata: {labels: {stack-e2e.kubex.ai/entity: done}}
+    spec:
+      restartPolicy: Never
+      nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker2}
+      containers:
+        - name: work
+          image: python@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "exit 0"]
+          resources: {requests: {cpu: 375m, memory: 192Mi}, limits: {cpu: 750m, memory: 384Mi}}
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: failed, namespace: cr-workload, labels: {stack-e2e.kubex.ai/entity: failed}}
+spec:
+  restartPolicy: Never
+  nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker2}
+  containers:
+    - name: fail
+      image: python@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c", "exit 3"]
+      resources: {requests: {cpu: 625m, memory: 320Mi}, limits: {cpu: 1250m, memory: 640Mi}}

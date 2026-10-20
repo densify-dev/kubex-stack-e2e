@@ -91,6 +91,10 @@ def replay(scenario: ScenarioSpec, directory: Path, artifacts: Path) -> Run:
     )
 
 
+def _snapshot(scenario: ScenarioSpec, label: str, repo_root: Path) -> Snapshot:
+    return take_snapshot(label, repo_root, scenario.snapshot_resources)
+
+
 def _await_window(scenario: ScenarioSpec, repo_root: Path) -> list[Snapshot]:
     """Sleep out the collection window, snapshotting on a fixed cadence.
 
@@ -100,7 +104,7 @@ def _await_window(scenario: ScenarioSpec, repo_root: Path) -> list[Snapshot]:
     """
 
     total = scenario.forwarder.window()
-    snapshots = [take_snapshot("collection window start", repo_root)]
+    snapshots = [_snapshot(scenario, "collection window start", repo_root)]
     remaining = total
     elapsed = 0.0
     while remaining > 0:
@@ -109,7 +113,7 @@ def _await_window(scenario: ScenarioSpec, repo_root: Path) -> list[Snapshot]:
         remaining -= step
         elapsed += step
         label = "collection window end" if remaining <= 0 else f"collection window +{int(elapsed)}s"
-        snapshots.append(take_snapshot(label, repo_root))
+        snapshots.append(_snapshot(scenario, label, repo_root))
     return snapshots
 
 
@@ -174,7 +178,7 @@ def execute(
         versions["collector_image_id"] = stack.job_image_id(job_name, scenario.stack.namespace, repo_root)
         job_failures = stack.job_failures(job_name, scenario.stack.namespace, repo_root)
         state = receiver.capture_state(repo_root, artifacts)
-        snapshots.append(take_snapshot("after upload", repo_root))
+        snapshots.append(_snapshot(scenario, "after upload", repo_root))
 
         archive = load_archive(
             receiver.archive_bytes(state), scenario.prefix, artifacts / "extracted-csv"

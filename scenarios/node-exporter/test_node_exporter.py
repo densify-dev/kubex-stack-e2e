@@ -109,16 +109,17 @@ def _node_exporter_series():
 
 # Tolerances. RATE: irate of a constant-rate counter differs from the rate by scrape-time jitter (about
 # 1e-4); every defect moves a value by at least 10%. EXACT: gauges and ratios of exact integers, written
-# with %f (5e-7). COUNT: round(increase(c[1m20s])) of a constant rate r is round(80 r), because the
-# collector widens [1m] by the 20s scrape interval (common/prometheus.go:675-697).
+# with %f (5e-7). COUNT: round(increase(c[1m])) over the 60s sample, which Prometheus extrapolates to
+# exactly 60 r. The collector widens the range to [1m20s] (common/prometheus.go:675-697) and reports
+# 80 r, so the two COUNT families are expected to fail until that is fixed.
 RATE = {"rel": 1e-2}
 EXACT = {"rel": 0, "abs": 1e-6}
 COUNT = {"rel": 0, "abs": 0}
 
 
 def _count(rate):
-    n = round(80 * rate)
-    assert abs(n - 80 * rate) < 1e-9, f"{rate} per second does not give a whole count over 80s"
+    n = round(60 * rate)
+    assert abs(n - 60 * rate) < 1e-9, f"{rate} per second does not give a whole count over 60s"
     return n
 
 
@@ -225,7 +226,7 @@ SCENARIO = ScenarioSpec(
     ),
     forwarder=ForwarderSpec(
         job_name="node-exporter-forwarder",
-        # increase(...[1m20s]) at the first grid point needs samples from 80s before it
+        # the collector queries increase(...[1m20s]), which needs samples from 80s before the first grid point
         window_seconds=240,
         collection=Collection(interval="minutes", interval_size=1, history=1, sample_rate=1),
     ),

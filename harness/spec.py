@@ -263,6 +263,8 @@ class ScenarioSpec:
     fixtures: Sequence[FixtureService] = ()
     resources: Sequence[str] = ()
     lifecycle: Sequence[Wait] = ()
+    # kubectl resource names captured in every snapshot besides nodes and pods
+    snapshot_resources: Sequence[str] = ()
     archive_prefix: str | None = None
     # Every inventory CSV the archive must hold, as "populated" or "header-only"; any other inventory CSV fails.
     files: Mapping[str, Literal["populated", "header-only"]] = field(default_factory=dict)

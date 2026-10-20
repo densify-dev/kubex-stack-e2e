@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -25,9 +25,9 @@ from harness.archive import (
 )
 from harness.command import HarnessError
 from harness.coverage import INVENTORY, check_archive, workflow_warning
-from harness.oracle import Oracle, Snapshot
-from harness.run import Run, _write_replay_inputs, replay
-from harness.spec import ClusterSpec, Collection, Node, ScenarioSpec
+from harness.oracle import Oracle, Snapshot, take_snapshot
+from harness.run import Run, _write_replay_inputs, execute, replay
+from harness.spec import ClusterSpec, Collection, ForwarderSpec, Node, ScenarioSpec
 
 ROOT = Path(__file__).resolve().parent.parent
 T1, T2 = "2026-10-16T21:15:00Z", "2026-10-16T21:16:00Z"
@@ -260,13 +260,53 @@ class ReplayTest(unittest.TestCase):
     def test_replay_inputs_round_trip_into_a_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            snaps = [Snapshot("s", NODES, PODS)]
+            snaps = [Snapshot("s", NODES, PODS, {"resourcequotas": [{"metadata": {"name": "q"}}]})]
             live = Run(SCENARIO, Archive({}), Oracle(snaps), root, uploads=1, job_name="j", job_failures=3, snapshots=snaps)
             _write_replay_inputs(root, live)
             (root / "extracted-csv").mkdir()
             again = replay(SCENARIO, root, root)
         self.assertEqual((again.uploads, again.job_name, again.job_failures), (1, "j", 3))
         self.assertEqual(again.snapshots, snaps)
+        self.assertEqual(again.snapshots[0].objects, snaps[0].objects)
+
+
+    def test_live_snapshots_capture_the_scenario_resources(self) -> None:
+        scenario = ScenarioSpec(
+            name="demo",
+            cluster=ClusterSpec(node_image="i", workers=[Node()]),
+            forwarder=ForwarderSpec(window_seconds=130),
+            snapshot_resources=("resourcequotas",),
+        )
+        calls = []
+
+        def recorder(label, repo_root, resources=()):
+            calls.append((label, tuple(resources)))
+            return Snapshot(label, [], [])
+
+        root = Path(".")
+        mocks = {name: MagicMock(unsafe=True) for name in ("cluster", "receiver", "fixtures", "stack", "prometheus", "artifacts_mod")}
+        with (
+            patch.multiple("harness.run", take_snapshot=recorder, load_archive=MagicMock(), write=MagicMock(), write_json=MagicMock(), **mocks),
+            patch("harness.run.time.sleep"),
+            execute(scenario, root, root, root),
+        ):
+            pass
+        self.assertEqual(
+            [label for label, _ in calls],
+            ["collection window start", "collection window +60s", "collection window +120s", "collection window end", "after upload"],
+        )
+        self.assertEqual({resources for _, resources in calls}, {("resourcequotas",)})
+
+        issued = []
+
+        def kubectl_json(args, repo_root):
+            issued.append(args)
+            return {"items": [{"metadata": {"name": args[1]}}]}
+
+        with patch("harness.oracle.kubectl_json", kubectl_json):
+            snapshot = take_snapshot("x", root, ("resourcequotas",))
+        self.assertIn(["get", "resourcequotas", "-A", "-o", "json"], issued)
+        self.assertEqual(snapshot.objects, {"resourcequotas": [{"metadata": {"name": "resourcequotas"}}]})
 
 
 class StackAndSummaryTest(unittest.TestCase):
