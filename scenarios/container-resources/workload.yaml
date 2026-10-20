@@ -160,3 +160,43 @@ spec:
       imagePullPolicy: IfNotPresent
       command: ["sh", "-c", "exit 3"]
       resources: {requests: {cpu: 625m, memory: 320Mi}, limits: {cpu: 1250m, memory: 640Mi}}
+---
+apiVersion: v1
+kind: Namespace
+metadata: {name: cr-churn}
+---
+# Restarts about every 102s: one counter step per 80s query window, and slower than the ~60s snapshot
+# cadence, so every lastState is seen. The kubelet back-off is capped at 1s by the cluster spec.
+apiVersion: v1
+kind: Pod
+metadata: {name: crash, namespace: cr-churn}
+spec:
+  restartPolicy: Always
+  nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker}
+  containers:
+    - name: crash
+      image: python@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9
+      imagePullPolicy: IfNotPresent
+      command: ["sh", "-c", "sleep 100; exit 42"]
+---
+# A new pod every minute that lives 90s, so pods overlap by 30s and one is always running. Only the
+# ephemeral-storage request is set, which leaves every cpu and memory total above unchanged.
+apiVersion: batch/v1
+kind: CronJob
+metadata: {name: churn, namespace: cr-churn}
+spec:
+  schedule: "* * * * *"
+  concurrencyPolicy: Allow
+  successfulJobsHistoryLimit: 6
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker}
+          containers:
+            - name: churn
+              image: python@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9
+              imagePullPolicy: IfNotPresent
+              command: ["sleep", "90"]
+              resources: {requests: {ephemeral-storage: 64Mi}}

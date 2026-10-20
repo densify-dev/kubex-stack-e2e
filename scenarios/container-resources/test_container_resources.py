@@ -10,7 +10,7 @@ captured in the snapshots, or from the fixture that stands in for Beyla.
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -37,6 +37,7 @@ from harness.spec import (
 HERE = Path(__file__).parent
 NAME = "container-resources"
 NAMESPACE = "cr-workload"
+CHURN = "cr-churn"
 GROUP_LABEL = "topology.kubex.ai/node-group"
 GROUP = "cr-workers"
 ENTITY_LABEL = "stack-e2e.kubex.ai/entity"
@@ -47,6 +48,7 @@ _CONTROL_PLANE_TOLERATION = [
 CLUSTER_SPEC = ClusterSpec(
     control_planes=[Node(labels=_SYSTEM_NODE)],
     workers=[Node(labels={GROUP_LABEL: GROUP}), Node(labels={GROUP_LABEL: GROUP})],
+    kubelet_configuration={"crashLoopBackOff": {"maxContainerRestartPeriod": "1s"}},
 )
 NODES = CLUSTER_SPEC.node_names(CLUSTER_NAME_PREFIX + NAME)
 CP, W1, W2 = NODES  # workload.yaml pins pods by these hostnames
@@ -142,6 +144,8 @@ SCENARIO = ScenarioSpec(
             _query("cronjob-job", f'kube_job_owner{{namespace="{NAMESPACE}",owner_kind="CronJob",owner_name="tick"}}', 1),
             _query("agent-available", f'kube_daemonset_status_number_available{{namespace="{NAMESPACE}",daemonset="agent"}} == 2', 1),
             _query("solo-restarted", f'kube_pod_container_status_restarts_total{{namespace="{NAMESPACE}",pod="solo"}} == 1', 1),
+            _query("churn-running", f'kube_pod_status_phase{{namespace="{CHURN}",pod=~"churn-.*",phase="Running"}} == 1', 1),
+            _query("crash-restarted", f'kube_pod_container_status_restarts_total{{namespace="{CHURN}",pod="crash"}} >= 1', 1),
             # the quota has finished accounting: every used quantity holds its final value (the first snapshot must not see less)
             *(
                 _query(f"quota-used-{key}", f'abs(kube_resourcequota{{namespace="{NAMESPACE}",type="used",resource="{key}"}} - {value}) < 1e-6', 1)
@@ -152,8 +156,8 @@ SCENARIO = ScenarioSpec(
     ),
     forwarder=ForwarderSpec(
         job_name="container-resources-forwarder",
-        window_seconds=180,
-        collection=Collection(interval="minutes", interval_size=1, history=1, sample_rate=1),
+        window_seconds=240,
+        collection=Collection(interval="minutes", interval_size=3, history=1, sample_rate=1),
     ),
     resources=["workload.yaml"],
     lifecycle=[
@@ -170,12 +174,14 @@ SCENARIO = ScenarioSpec(
                 "cluster/cpu_reservation_percent.csv",
                 "cluster/memory_requests.csv",
                 "cluster/memory_reservation_percent.csv",
-                *(f"container/{name}.csv" for name in CONTAINER_FILES),
+                *(f"container/{name}.csv" for name in (*CONTAINER_FILES, "events", "ephemeral_storage_request")),
                 "node/attributes.csv",
                 "node/config.csv",
                 "node/cpu_limit.csv",
                 "node/cpu_request.csv",
                 "node/cpu_reservation_percent.csv",
+                "node/ephemeral_storage_request.csv",
+                "node/ephemeral_storage_reservation_percent.csv",
                 "node/memory_limit.csv",
                 "node/memory_request.csv",
                 "node/memory_reservation_percent.csv",
@@ -298,11 +304,11 @@ def _count(value, where):
 # --- archive helpers ----------------------------------------------------------
 
 
-def _ours(archive, path):
-    """The rows of this scenario's namespace; the system pods in other namespaces are not under test."""
+def _ours(archive, path, namespace=NAMESPACE):
+    """The rows of one of this scenario's namespaces; the system pods in other namespaces are not under test."""
 
     table = archive.csv(path)
-    return Csv(path, table.headers, table.where(Namespace=NAMESPACE))
+    return Csv(path, table.headers, table.where(Namespace=namespace))
 
 
 def _row(archive, path, entity, container):
@@ -672,3 +678,117 @@ def test_terminal_pods_are_excluded_from_attributes(archive, oracle, path, ident
     total = getattr(oracle, kind)(resource, selector)
     expected = round(total * 1000) if resource == "cpu" else int(total) // MIB
     assert int(archive.csv(path).one(**{identity_column: identity})[column]) == expected
+
+
+# --- container/: restart events, max_restarts and the request series of a churning CronJob ------
+# crash restarts every ~102s and churn starts a pod every minute, both pinned to W1 in cr-churn. Truth
+# is the snapshots: Kubernetes reports each restart as a lastState and a new running startedAt.
+
+LAG = timedelta(seconds=30)  # a restart can be up to half a snapshot interval older than the snapshot that sees it
+WINDOW = timedelta(minutes=3)
+
+
+def _time(value):
+    return datetime.fromisoformat(value)
+
+
+def _audit_time(archive):
+    return _time(archive.csv("cluster/config.csv").one(Name=CLUSTER)["AuditTime"])
+
+
+def _crash(oracle):
+    """The crash container's status in every snapshot, oldest first."""
+
+    return [
+        s
+        for snapshot in oracle.snapshots
+        for p in snapshot.pods
+        if (p["metadata"]["namespace"], p["metadata"]["name"]) == (CHURN, "crash")
+        for s in _statuses(p, "crash")
+    ]
+
+
+def _finished(oracle):
+    """finishedAt and exit code of every termination a snapshot saw as lastState."""
+
+    terminated = (s.get("lastState", {}).get("terminated") for s in _crash(oracle))
+    return {_time(t["finishedAt"]): t["exitCode"] for t in terminated if t}
+
+
+def _restarts(oracle):
+    """startedAt of every restarted container a snapshot saw running."""
+
+    return {_time(s["state"]["running"]["startedAt"]) for s in _crash(oracle) if s["restartCount"] >= 1 and "running" in s["state"]}
+
+
+def test_crash_cadence(oracle):
+    """Without the capped back-off the restarts spread out to 300s and the tests below would have nothing to match."""
+
+    counts = [s["restartCount"] for s in _crash(oracle)]
+    assert all(0 <= b - a <= 1 for a, b in zip(counts, counts[1:])), f"restartCount between snapshots: {counts}"
+    finished = _finished(oracle)
+    assert len(_restarts(oracle)) >= 2
+    assert set(finished.values()) == {42}
+    times = sorted(finished)
+    assert all(b - a <= timedelta(seconds=115) for a, b in zip(times, times[1:])), f"finishedAt: {times}"
+
+
+def test_restart_events(archive, oracle):
+    finished, at = _finished(oracle), _audit_time(archive)
+    rows = _ours(archive, "container/events.csv", CHURN)
+    crash = [r for r in rows if r["EntityName"] == "crash"]
+    for row in crash:
+        assert (row["EntityType"], row["ContainerName"]) == ("Pod", "crash")
+        assert row["ExitCode"] == "42"
+        assert row["IsPid1"] == "true"  # decode check only: the restart query encodes no pid1 (container/events.go:143-147)
+        assert _time(row["EventTime"]) in finished, f"no termination at {row['EventTime']}"
+    times = [_time(r["EventTime"]) for r in crash]
+    assert len(set(times)) == len(times), f"repeated EventTime in {sorted(times)}"
+    # events come from a 40s increase evaluated every 20s; 60s covers exit to counter, scrape and step
+    certain = [f for f in finished if at - WINDOW <= f <= at - timedelta(seconds=60)]
+    assert certain
+    assert all(times.count(f) == 1 for f in certain), f"certain terminations {sorted(certain)} against events {sorted(times)}"
+    assert [r for r in rows if r["EntityName"] != "crash"] == []
+    assert _ours(archive, "container/events.csv").rows == []
+
+
+def test_max_restarts_match_restarts(archive, oracle):
+    """Each 1 is one observed restart within the last minute plus the widened query window (container/container.go:793-797)."""
+
+    restarts, at = _restarts(oracle), _audit_time(archive)
+    table = archive.csv("container/max_restarts.csv")
+    crash = Csv(table.path, table.headers, table.where(Namespace=CHURN, EntityName="crash"))
+    assert_metric_grid(crash, KEYS, [(CLUSTER, CHURN, "crash", "Pod", "crash")], _grid(archive))
+    series = sorted((_time(r["MetricTime"]), float(r["MaxRestarts"])) for r in crash)
+    assert {v for _, v in series} <= {0.0, 1.0}, series
+    matched = set()
+    for step, value in series:
+        if value:
+            near = [r for r in sorted(restarts) if step - timedelta(seconds=60) - LAG < r <= step and r not in matched]
+            assert near, f"MaxRestarts 1 at {step} with no unmatched restart in {sorted(restarts)}"
+            matched.add(near[0])
+    lost = [r for r in restarts if at - timedelta(seconds=240) < r <= at - LAG and r not in matched]
+    assert not lost, f"restarts {sorted(lost)} left no MaxRestarts 1: {series}"
+    quiet = [r for r in table if r["Namespace"] == NAMESPACE or (r["Namespace"], r["EntityName"]) == (CHURN, "churn")]
+    assert quiet
+    assert all(float(r["MaxRestarts"]) == 0 for r in quiet), [r for r in quiet if float(r["MaxRestarts"])]
+
+
+def test_churn_request_series_cover_the_grid(archive, oracle):
+    """One churn pod is always running, so a series that spans the grid exists; the collector writes only the first pod's."""
+
+    pods = {p["metadata"]["uid"]: p for s in oracle.snapshots for p in s.pods if p["metadata"]["namespace"] == CHURN and p["metadata"]["name"].startswith("churn-")}
+    spans = []
+    for pod in pods.values():
+        state = next((s["state"].get("running") or s["state"].get("terminated") for s in _statuses(pod, "churn")), None)
+        if state:  # no state while the pod is still pending
+            spans.append((_time(state["startedAt"]), _time(state["finishedAt"]) if "finishedAt" in state else None))
+    for step in map(_time, _grid(archive)):
+        assert any(start <= step and (end is None or end > step) for start, end in spans), f"no churn pod running at {step}: {spans}"
+    rows = _ours(archive, "container/ephemeral_storage_request.csv", CHURN)
+    rows = Csv(rows.path, rows.headers, rows.where(EntityName="churn"))
+    assert_metric_grid(rows, KEYS, [(CLUSTER, CHURN, "churn", "CronJob", "churn")], _grid(archive))
+    container = next(c for c in next(iter(pods.values()))["spec"]["containers"] if c["name"] == "churn")
+    expected = float(quantity(container["resources"]["requests"]["ephemeral-storage"], "churn ephemeral-storage request"))
+    for row in rows:
+        assert float(row["EphemeralStorageRequest"]) == pytest.approx(expected, abs=TOLERANCE), f"at {row['MetricTime']}"

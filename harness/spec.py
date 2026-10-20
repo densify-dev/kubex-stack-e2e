@@ -90,6 +90,8 @@ class ClusterSpec:
     control_planes: Sequence[Node] = (Node(),)
     workers: Sequence[Node] = ()
     kubelet: Mapping[str, str] = field(default_factory=dict)
+    # KubeletConfiguration fields applied to every node, e.g. {"crashLoopBackOff": {"maxContainerRestartPeriod": "1s"}}
+    kubelet_configuration: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not self.workers:

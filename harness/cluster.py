@@ -42,6 +42,11 @@ def render_config(cluster: ClusterSpec) -> str:
                 ).rstrip()
             ]
         document["nodes"].append(item)
+    if cluster.kubelet_configuration:
+        # a top-level patch reaches every node; kind reads one KubeletConfiguration
+        document["kubeadmConfigPatches"] = [
+            yaml.safe_dump({"kind": "KubeletConfiguration", **cluster.kubelet_configuration}, sort_keys=False).rstrip()
+        ]
     return yaml.safe_dump(document, sort_keys=False)
 
 

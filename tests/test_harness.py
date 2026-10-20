@@ -37,6 +37,7 @@ from harness.archive import (
     parse_csv,
     read_archive_files,
 )
+from harness.cluster import render_config
 from harness.command import HarnessError, run
 from harness.fixtures import _deployment
 from harness.metric_fixture_server import (
@@ -626,6 +627,15 @@ class SpecValidationTest(unittest.TestCase):
             ["kubex-e2e-demo-control-plane", "kubex-e2e-demo-worker", "kubex-e2e-demo-worker2"],
         )
         self.assertEqual(scenario.prefix, "data/demo")
+
+    def test_kubelet_configuration_renders_one_top_level_patch(self) -> None:
+        configuration = {"crashLoopBackOff": {"maxContainerRestartPeriod": "1s"}}
+        rendered = yaml.safe_load(render_config(ClusterSpec(node_image="i", workers=[Node()], kubelet_configuration=configuration)))
+        self.assertEqual(
+            [yaml.safe_load(patch) for patch in rendered["kubeadmConfigPatches"]],
+            [{"kind": "KubeletConfiguration", **configuration}],
+        )
+        self.assertNotIn("kubeadmConfigPatches", yaml.safe_load(render_config(ClusterSpec(node_image="i", workers=[Node()]))))
 
     def test_resource_paths_fail_before_cluster_work(self) -> None:
         scenario = ScenarioSpec(
