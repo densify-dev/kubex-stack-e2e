@@ -771,7 +771,7 @@ def test_max_restarts_match_restarts(archive, oracle):
             matched.add(near[0])
     lost = [r for r in restarts if at - timedelta(seconds=240) < r <= at - LAG and r not in matched]
     assert not lost, f"restarts {sorted(lost)} left no MaxRestarts 1: {series}"
-    quiet = [r for r in table if r["Namespace"] == NAMESPACE or (r["Namespace"], r["EntityName"]) == (CHURN, "churn")]
+    quiet = [r for r in table if r["Namespace"] == NAMESPACE or (r["Namespace"] == CHURN and r["EntityName"] != "crash")]
     assert quiet
     assert all(float(r["MaxRestarts"]) == 0 for r in quiet), [r for r in quiet if float(r["MaxRestarts"])]
 

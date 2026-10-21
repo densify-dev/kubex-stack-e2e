@@ -479,3 +479,12 @@ def test_pod_ip_exporter_series(archive, path, keys, column, expected, tolerance
     assert_metric_grid(table, keys, expected, expected_timestamps(audit_time, SCENARIO.forwarder.collection))
     for row in table:
         assert float(row[column]) == pytest.approx(expected[tuple(row[k] for k in keys)], **tolerance), f"{path} at {row['MetricTime']}"
+
+
+@pytest.mark.parametrize("path", ["node/memory_ws.csv", "node/memory_ws_utilization.csv"])
+def test_working_set_series_follow_the_collector_grid(archive, path):
+    """The real cAdvisor root cgroup of every node, so only identities and the grid are checked (node.go:621,650)."""
+
+    audit_time = archive.csv("node_group/config.csv").one(**ROW)["AuditTime"]
+    identities = [("nodegroup-labels", n) for n in (CP, W1, W2)]
+    assert_metric_grid(archive.csv(path), NODE_KEYS, identities, expected_timestamps(audit_time, SCENARIO.forwarder.collection))
