@@ -201,6 +201,8 @@ class FixtureService:
     target_port: int | None = None
     labels: Mapping[str, str] = field(default_factory=dict)
     annotations: Mapping[str, str] = field(default_factory=dict)
+    # Node name the fixture pod is pinned to (kubernetes.io/hostname), for a fixture that stands in for one node's exporter.
+    node: str | None = None
 
     def __post_init__(self) -> None:
         _check_kubernetes_name(self.name, "FixtureService.name")

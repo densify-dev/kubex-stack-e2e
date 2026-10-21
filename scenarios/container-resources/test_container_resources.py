@@ -145,6 +145,8 @@ SCENARIO = ScenarioSpec(
             _query("agent-available", f'kube_daemonset_status_number_available{{namespace="{NAMESPACE}",daemonset="agent"}} == 2', 1),
             _query("solo-restarted", f'kube_pod_container_status_restarts_total{{namespace="{NAMESPACE}",pod="solo"}} == 1', 1),
             _query("churn-running", f'kube_pod_status_phase{{namespace="{CHURN}",pod=~"churn-.*",phase="Running"}} == 1', 1),
+            _query("mixed-running", f'kube_pod_status_phase{{namespace="{CHURN}",pod=~"mixed-0-.*",phase="Running"}} == 1', 1),
+            _query("mixed-finished", f'kube_pod_status_phase{{namespace="{CHURN}",pod=~"mixed-1-.*",phase="Succeeded"}} == 1', 1),
             _query("crash-restarted", f'kube_pod_container_status_restarts_total{{namespace="{CHURN}",pod="crash"}} >= 1', 1),
             # the quota has finished accounting: every used quantity holds its final value (the first snapshot must not see less)
             *(
@@ -774,21 +776,48 @@ def test_max_restarts_match_restarts(archive, oracle):
     assert all(float(r["MaxRestarts"]) == 0 for r in quiet), [r for r in quiet if float(r["MaxRestarts"])]
 
 
+def _churn_pods(oracle, entity):
+    """Pods of an owner in cr-churn, the latest status per uid over all snapshots."""
+
+    return {p["metadata"]["uid"]: p for s in oracle.snapshots for p in s.pods if p["metadata"]["namespace"] == CHURN and p["metadata"]["name"].startswith(f"{entity}-")}
+
+
+def _spans(oracle, entity):
+    """The (startedAt, finishedAt or None) of the owner's container in each of its cr-churn pods; the container is named like the owner."""
+
+    spans = []
+    for pod in _churn_pods(oracle, entity).values():
+        state = next((s["state"].get("running") or s["state"].get("terminated") for s in _statuses(pod, entity)), None)
+        if state:  # no state while the pod is still pending
+            spans.append((_time(state["startedAt"]), _time(state["finishedAt"]) if "finishedAt" in state else None))
+    return spans
+
+
 def test_churn_request_series_cover_the_grid(archive, oracle):
     """One churn pod is always running, so a series that spans the grid exists; the collector writes only the first pod's."""
 
-    pods = {p["metadata"]["uid"]: p for s in oracle.snapshots for p in s.pods if p["metadata"]["namespace"] == CHURN and p["metadata"]["name"].startswith("churn-")}
-    spans = []
-    for pod in pods.values():
-        state = next((s["state"].get("running") or s["state"].get("terminated") for s in _statuses(pod, "churn")), None)
-        if state:  # no state while the pod is still pending
-            spans.append((_time(state["startedAt"]), _time(state["finishedAt"]) if "finishedAt" in state else None))
+    spans = _spans(oracle, "churn")
     for step in map(_time, _grid(archive)):
         assert any(start <= step and (end is None or end > step) for start, end in spans), f"no churn pod running at {step}: {spans}"
     rows = _ours(archive, "container/ephemeral_storage_request.csv", CHURN)
     rows = Csv(rows.path, rows.headers, rows.where(EntityName="churn"))
     assert_metric_grid(rows, KEYS, [(CLUSTER, CHURN, "churn", "CronJob", "churn")], _grid(archive))
-    container = next(c for c in next(iter(pods.values()))["spec"]["containers"] if c["name"] == "churn")
+    container = next(c for c in next(iter(_churn_pods(oracle, "churn").values()))["spec"]["containers"] if c["name"] == "churn")
     expected = float(quantity(container["resources"]["requests"]["ephemeral-storage"], "churn ephemeral-storage request"))
     for row in rows:
         assert float(row["EphemeralStorageRequest"]) == pytest.approx(expected, abs=TOLERANCE), f"at {row['MetricTime']}"
+
+
+FINISHED_AND_RUNNING = {"churn": "CronJob", "mixed": "Job"}  # owners in cr-churn that keep finished pods next to a running one
+
+
+@pytest.mark.parametrize("entity", FINISHED_AND_RUNNING)
+def test_power_state_of_owners_with_finished_pods(archive, oracle, entity):
+    """Running while any pod of the owner runs the container, however many finished pods the owner keeps. The collector
+    keeps the state of the owner's last pod series (container/collection.go:285-286); mixed's finished pod sorts last."""
+
+    spans, at = _spans(oracle, entity), _audit_time(archive)
+    assert any(end is not None and end <= at for _, end in spans), f"no {entity} pod finished before {at}: {spans}"
+    assert any(start <= at and (end is None or end > at) for start, end in spans), f"no {entity} pod running at {at}: {spans}"
+    rows = _ours(archive, "container/attributes.csv", CHURN).where(EntityName=entity)
+    assert [(r["EntityType"], r["ContainerName"], r["PowerState"]) for r in rows] == [(FINISHED_AND_RUNNING[entity], entity, "Running")]

@@ -65,6 +65,7 @@ def _deployment(service: FixtureService, namespace: str) -> str:
                             {"name": "fixture", "configMap": {"name": f"{service.name}-metrics"}},
                             {"name": "server", "configMap": {"name": SERVER_CONFIGMAP}},
                         ],
+                        **({"nodeSelector": {"kubernetes.io/hostname": service.node}} if service.node else {}),
                     },
                 },
             },

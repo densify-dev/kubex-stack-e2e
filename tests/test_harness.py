@@ -122,6 +122,15 @@ class FixtureServerTest(unittest.TestCase):
         container = deployment["spec"]["template"]["spec"]["containers"][0]
         self.assertEqual(container["image"], FIXTURE_IMAGE)
 
+    def test_deployment_pins_the_fixture_to_its_node(self) -> None:
+        metrics = [Metric(name="fixture_value", type="gauge")]
+        pinned = yaml.safe_load(_deployment(FixtureService(name="metrics", metrics=metrics, node="kind-worker2"), "fixtures"))
+        self.assertEqual(
+            pinned["spec"]["template"]["spec"]["nodeSelector"], {"kubernetes.io/hostname": "kind-worker2"}
+        )
+        free = yaml.safe_load(_deployment(FixtureService(name="metrics", metrics=metrics), "fixtures"))
+        self.assertNotIn("nodeSelector", free["spec"]["template"]["spec"])
+
     def test_typed_metric_normalizes_into_valid_fixture_input(self) -> None:
         """The harness generates the fixture, so its output must satisfy the server."""
 

@@ -200,3 +200,23 @@ spec:
               imagePullPolicy: IfNotPresent
               command: ["sleep", "90"]
               resources: {requests: {ephemeral-storage: 64Mi}}
+---
+# Indexed, so pods are named mixed-<index>-<random>: index 1 exits at once and sorts after index 0, which keeps
+# running. No requests, so every cpu and memory total above is unchanged; cr-churn has no quota.
+apiVersion: batch/v1
+kind: Job
+metadata: {name: mixed, namespace: cr-churn}
+spec:
+  completionMode: Indexed
+  completions: 2
+  parallelism: 2
+  backoffLimit: 0
+  template:
+    spec:
+      restartPolicy: Never
+      nodeSelector: {kubernetes.io/hostname: kubex-e2e-container-resources-worker}
+      containers:
+        - name: mixed
+          image: python@sha256:656d12e70054d5fda18a045e2494c96701e9792dd1445f95b3d038df954f57e9
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "if [ \"$JOB_COMPLETION_INDEX\" = 1 ]; then exit 0; fi; exec sleep infinity"]

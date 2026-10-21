@@ -5,7 +5,8 @@ the kubelet mirrors it into allocatable. That is all the collector reads, throug
 is equivalent for every collected metric. Worker 1 carries the GPU feature discovery labels of a 4-GPU A100
 node, and a DCGM exporter fixture serves its four GPUs: two bound to the `trainer` container and one to each of
 the two `infer` replicas, whose values differ. Worker 2 is labelled like a GKE GPU node with one T4 GPU; the fixture serves that GPU too, busy but bound
-to no container.
+to no container. Worker 3 is a 1-GPU A100 node time-sliced four ways, as GPU feature discovery labels it: it advertises four
+`nvidia.com/gpu` but holds one physical GPU, which the fixture serves unbound.
 """
 
 from __future__ import annotations
@@ -57,16 +58,26 @@ W1_GPU_LABELS = {
     "nvidia.com/vgpu.present": "false",
 }
 W2_GPU_LABELS = {"cloud.google.com/gke-accelerator": "nvidia-tesla-t4"}
+# Time-slicing: gpu.count stays the physical GPUs, gpu.replicas is the slices per GPU and the product gains -SHARED
+W3_GPU_LABELS = {
+    "nvidia.com/gpu.present": "true",
+    "nvidia.com/gpu.product": "NVIDIA-A100-SXM4-40GB-SHARED",
+    "nvidia.com/gpu.count": "1",
+    "nvidia.com/gpu.memory": "40960",
+    "nvidia.com/gpu.replicas": "4",
+    "nvidia.com/gpu.sharing-strategy": "time-slicing",
+}
 CLUSTER_SPEC = ClusterSpec(
     control_planes=[Node(labels=_SYSTEM_NODE)],
     workers=[
         Node(labels={GROUP_LABEL: GROUP, **W1_GPU_LABELS}, extended_resources={GPU: "4"}),
         Node(labels={GROUP_LABEL: GROUP, **W2_GPU_LABELS}, extended_resources={GPU: "1"}),
+        Node(labels={GROUP_LABEL: GROUP, **W3_GPU_LABELS}, extended_resources={GPU: "4"}),  # 1 GPU x 4 replicas
     ],
 )
 NODES = CLUSTER_SPEC.node_names(CLUSTER_NAME_PREFIX + NAME)
-CP, W1, W2 = NODES  # workload.yaml pins W1 by hostname
-GPU_LABELS = {CP: {}, W1: W1_GPU_LABELS, W2: W2_GPU_LABELS}
+CP, W1, W2, W3 = NODES  # workload.yaml pins W1 by hostname
+GPU_LABELS = {CP: {}, W1: W1_GPU_LABELS, W2: W2_GPU_LABELS, W3: W3_GPU_LABELS}
 
 # --- fixture inputs ----------------------------------------------------------
 
@@ -81,6 +92,7 @@ GPUS = [
     Gpu(W1, 2, A100, "infer-0", "serve", 20, 6000, 90),
     Gpu(W1, 3, A100, "infer-1", "serve", 60, 9000, 110),
     Gpu(W2, 0, T4, None, None, 70, 4000, 60),  # busy, but bound to no container the fixture names
+    Gpu(W3, 0, A100, None, None, 50, 8000, 70),  # the one physical GPU behind W3's four slices, bound to nothing
 ]
 CONTAINERS = {("trainer", "train"): ["trainer-0"], ("infer", "serve"): ["infer-0", "infer-1"]}  # (entity, container) -> pods
 
@@ -155,30 +167,29 @@ def _owner_truth(instances, aggregate):
     return {k: aggregate(p[k] for p in per_pod) for k in per_pod[0]}
 
 
-def _node_truth(gpus, allocatable):
+def _node_truth(gpus):
     """Per node, from that node's GPUs (node/node.go:218-228)."""
 
     util = statistics.mean(g.util for g in gpus)
     return {
         "gpu_utilization": util,
-        "gpu_utilization_gpus": util * allocatable / 100,
+        "gpu_utilization_gpus": util * len(gpus) / 100,  # physical GPUs: the node's DCGM series; under time-slicing allocatable counts slices
         "gpu_mem_utilization": statistics.mean(100 * g.used / g.card[1] for g in gpus),
         "gpu_mem_used": sum(g.used for g in gpus),
         "gpu_power_usage": sum(g.power for g in gpus),
     }
 
 
-def _group_truth(allocatable):
+def _group_truth():
     """Members with DCGM series: utilization, gpus and mem utilization averaged over them, mem used and power summed
     (nodegroup/nodegroup.go:443-456). The gpus value is the per-node GPUs-busy averaged over members, in the same
     loop and wrapper as the group utilization; a group total would be 2.3."""
 
-    nodes = [_node_truth(_on(n), allocatable[n]) for n in (W1, W2)]
+    nodes = [_node_truth(_on(n)) for n in (W1, W2, W3)]
     mean = {"gpu_utilization", "gpu_utilization_gpus", "gpu_mem_utilization"}
     return {k: (statistics.mean if k in mean else sum)(n[k] for n in nodes) for k in nodes[0]}
 
 
-_ALLOCATABLE = {W1: 4, W2: 1}  # from CLUSTER_SPEC
 _TRAINER = [(_bound("trainer-0", "train"), 2)]  # requests from workload.yaml
 _INFER = [(_bound("infer-0", "serve"), 1), (_bound("infer-1", "serve"), 1)]
 # The formulas above, checked against hand-computed values
@@ -194,17 +205,21 @@ assert _owner_truth(_INFER, max) == pytest.approx(
     {"gpu_utilization": 60, "gpu_utilization_gpus": 0.6, "gpu_mem_utilization": 22.318107424490403,
      "gpu_mem_used": 9000, "gpu_power_usage": 110}
 )  # fmt: skip
-assert _node_truth(_on(W1), 4) == pytest.approx(
+assert _node_truth(_on(W1)) == pytest.approx(
     {"gpu_utilization": 40, "gpu_utilization_gpus": 1.6, "gpu_mem_utilization": 24.177949709864606,
      "gpu_mem_used": 39000, "gpu_power_usage": 500}
 )  # fmt: skip
-assert _node_truth(_on(W2), 1) == pytest.approx(
+assert _node_truth(_on(W2)) == pytest.approx(
     {"gpu_utilization": 70, "gpu_utilization_gpus": 0.7, "gpu_mem_utilization": 26.041666666666668,
      "gpu_mem_used": 4000, "gpu_power_usage": 60}
 )  # fmt: skip
-assert _group_truth(_ALLOCATABLE) == pytest.approx(
-    {"gpu_utilization": 55, "gpu_utilization_gpus": 1.15, "gpu_mem_utilization": 25.10980818826564,
-     "gpu_mem_used": 43000, "gpu_power_usage": 560}
+assert _node_truth(_on(W3)) == pytest.approx(
+    {"gpu_utilization": 50, "gpu_utilization_gpus": 0.5, "gpu_mem_utilization": 19.838317710658135,
+     "gpu_mem_used": 8000, "gpu_power_usage": 70}
+)  # fmt: skip
+assert _group_truth() == pytest.approx(
+    {"gpu_utilization": 53.333333333333336, "gpu_utilization_gpus": 0.9333333333333332, "gpu_mem_utilization": 23.352644695729804,
+     "gpu_mem_used": 51000, "gpu_power_usage": 630}
 )  # fmt: skip
 
 # Same files as node-pressure produces
@@ -312,10 +327,10 @@ SCENARIO = ScenarioSpec(
     resources=["workload.yaml"],
     prometheus=PrometheusSpec(
         queries=[
-            _query("gpu-allocatable", 'kube_node_status_allocatable{resource="nvidia_com_gpu"}', 2),
+            _query("gpu-allocatable", 'kube_node_status_allocatable{resource="nvidia_com_gpu"}', 3),
             _query("pods-running", f'kube_pod_status_phase{{namespace="{NAMESPACE}",phase="Running"}} == 1', 3),
             _query("owners", f'kube_pod_owner{{namespace="{NAMESPACE}",owner_kind="StatefulSet"}}', 3),
-            _query("dcgm-gpus", "DCGM_FI_DEV_GPU_UTIL", len(GPUS)),  # four on W1, one on W2
+            _query("dcgm-gpus", "DCGM_FI_DEV_GPU_UTIL", len(GPUS)),  # four on W1, one each on W2 and W3
         ],
     ),
     forwarder=ForwarderSpec(
@@ -357,10 +372,6 @@ def _gpu_quantity(oracle, pod, container, kind):
     )["spec"]
     resources = next(c for c in spec["containers"] if c["name"] == container)["resources"]
     return quantity(resources[kind][GPU], f"pod {pod} container {container} {kind}")
-
-
-def _allocatable(oracle, node):
-    return float(quantity(_node(oracle.primary, node)["status"]["allocatable"][GPU], node))
 
 
 def _short(node):
@@ -414,7 +425,7 @@ def test_extended_resources_persist_through_the_window(run):
 
     labels = [s.label for s in run.snapshots]
     assert labels[0] == "collection window start" and labels[-1] == "after upload" and len(labels) >= 3, labels
-    declared = {W1: CLUSTER_SPEC.workers[0].extended_resources[GPU], W2: CLUSTER_SPEC.workers[1].extended_resources[GPU]}
+    declared = {name: spec.extended_resources[GPU] for name, spec in zip((W1, W2, W3), CLUSTER_SPEC.workers)}
     for snapshot in run.snapshots:
         for field in ("capacity", "allocatable"):
             for name, count in declared.items():
@@ -487,13 +498,13 @@ DCGM_GROUP_FILES = [f"node_group/{stem}_avg.csv" for stem in DCGM_STEMS]
 
 
 @pytest.mark.parametrize("path", DCGM_NODE_FILES)
-def test_node_dcgm_series(archive, oracle, path):
-    """The control plane has no DCGM series."""
+def test_node_dcgm_series(archive, path):
+    """The control plane has no DCGM series. W3 is time-sliced: GPUs busy count its one physical GPU, not its four slices."""
 
     key, column = _series(path)
     _check_rows(
-        archive, path, ["ClusterName", "NodeName"], [(CLUSTER, W1), (CLUSTER, W2)], column,
-        lambda row: _node_truth(_on(row["NodeName"]), _allocatable(oracle, row["NodeName"]))[key],
+        archive, path, ["ClusterName", "NodeName"], [(CLUSTER, n) for n in (W1, W2, W3)], column,
+        lambda row: _node_truth(_on(row["NodeName"]))[key],
     )  # fmt: skip
 
 
@@ -512,11 +523,11 @@ def test_group_gpu_requests_and_reservation(archive, oracle, path):
 
 
 @pytest.mark.parametrize("path", DCGM_GROUP_FILES)
-def test_group_dcgm_series(archive, oracle, path):
+def test_group_dcgm_series(archive, path):
     """Utilization, gpus and memory utilization are the mean of the node values, memory used and power their sum."""
 
     key, column = _series(path)
-    truth = _group_truth({n: _allocatable(oracle, n) for n in (W1, W2)})[key]
+    truth = _group_truth()[key]
     _check_rows(archive, path, ["ClusterName", "NodeGroupName"], [(CLUSTER, GROUP)], column, lambda row: truth)
 
 

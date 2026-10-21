@@ -7,7 +7,8 @@ with different values, and are labelled the way a namespace-enforcing scrape (fo
 user-workload monitoring) rewrites an exporter's series: the workload identity sits in
 `exported_namespace/pod/container`, and `namespace/pod/container` name the exporter. A DCGM fixture also runs,
 with conflicting values for infer-0's GPU; the collector must take container data from
-the Kubex exporter (internal/node/node.go:510-531).
+the Kubex exporter (internal/node/node.go:510-531). The DCGM fixture exports no `Hostname`, as dcgm-exporter
+does with `--no-hostname`, so the node and node group DCGM files must take their node from the scrape's `node` label.
 
 There is no `nvidia.com/gpu` request and no extended resource: on this path the collector reads container GPU
 requests from the exporter, not from Kubernetes, and a fractional KAI share cannot be expressed as one anyway.
@@ -126,7 +127,9 @@ def _dcgm_series():
         "UUID": "GPU-00000002-a100-4000-8000-000000000002",
         "device": "nvidia2",
         "modelName": DCGM["model"],
-        "Hostname": W1,
+        # As dcgm-exporter --no-hostname exports it: no Hostname. node is what the chart's scrape relabel sets for an
+        # exporter pod on W1; exposed here because one fixture pod serves it, and honor_labels keeps it.
+        "node": W1,
         "namespace": NAMESPACE,
         "pod": "infer-0",
         "container": "serve",
@@ -240,7 +243,8 @@ BASE_FILES = (
     "node_group/memory_requests.csv",
     "node_group/memory_reservation_percent.csv",
 )
-# The node and node group files come from the DCGM fixture; their values are gpu-device-plugin's to assert.
+# The node and node group files come from the DCGM fixture; their identity and values are asserted here for the
+# no-Hostname case (gpu-device-plugin asserts them with a Hostname).
 GPU_FILES = (
     "container/gpu_limit.csv",
     "container/gpu_request.csv",
@@ -300,7 +304,7 @@ SCENARIO = ScenarioSpec(
             # the exporter identity survived the scrape, so only the exported_ mapping can attribute the infer series
             _query("kubex-exported", f'kubex_gpu_container_requests{{exported_namespace="{NAMESPACE}",namespace="kubex",pod="{EXPORTER_POD}"}}', 2),
             _query("kubex-gpus", "kubex_gpu_container_sm_utilization_percent_seconds_total", 4),
-            _query("dcgm", f'DCGM_FI_DEV_GPU_UTIL{{Hostname="{W1}"}}', 1),
+            _query("dcgm", f'DCGM_FI_DEV_GPU_UTIL{{node="{W1}",Hostname=""}}', 1),
             _query("pods-running", f'kube_pod_status_phase{{namespace="{NAMESPACE}",phase="Running"}} == 1', 3),
             _query("owners", f'kube_pod_owner{{namespace="{NAMESPACE}",owner_kind="StatefulSet"}}', 3),
             _query("sharing-label", 'kube_node_labels{label_nvidia_com_gpu_sharing_strategy="time-slicing"}', 1),
@@ -418,3 +422,35 @@ def test_kubex_workloads_match_the_fixture(archive, path):
     for row in table:
         want, tolerance = _owner_truth(INSTANCES[row["EntityName"], row["ContainerName"]], aggregate)[key]
         assert float(row[column]) == pytest.approx(want, **tolerance), f"{path} {dict(row)}"
+
+
+# --- node/ and node_group/: DCGM without a Hostname ------------------------------
+
+DCGM_NODE = {  # one GPU on W1, so its node average and sum are its own values (node/node.go:218-228)
+    "gpu_utilization": DCGM["util"],
+    "gpu_mem_utilization": 100 * DCGM["used"] / DCGM_FB_TOTAL,
+    "gpu_mem_used": DCGM["used"],
+    "gpu_power_usage": DCGM["power"],
+}
+
+
+def _check_dcgm_series(archive, scope, keys, identity, stem):
+    column = "".join(word.capitalize() for word in stem.split("_")) + "Avg"
+    table = archive.csv(f"{scope}/{stem}_avg.csv")
+    assert_metric_grid(table, keys, [identity], _grid(archive))
+    for row in table:
+        assert float(row[column]) == pytest.approx(DCGM_NODE[stem], **EXACT), f"{scope}/{stem} at {row['MetricTime']}"
+
+
+@pytest.mark.parametrize("stem", DCGM_NODE)
+def test_dcgm_node_series_keep_the_scrape_node(archive, stem):
+    """Without a Hostname label the series still belong to the node the scrape gave them."""
+
+    _check_dcgm_series(archive, "node", ["ClusterName", "NodeName"], (CLUSTER, W1), stem)
+
+
+@pytest.mark.parametrize("stem", DCGM_NODE)
+def test_dcgm_group_series_keep_the_scrape_node(archive, stem):
+    """A node group of that one node averages and sums to the node's values."""
+
+    _check_dcgm_series(archive, "node_group", ["ClusterName", "NodeGroupName"], (CLUSTER, GROUP), stem)
