@@ -49,15 +49,44 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
 
 
+def _headline(message: str) -> str:
+    """The first two lines of the failure: the custom message and its comparison or first detail."""
+
+    lines = [line.strip() for line in message.removeprefix("AssertionError: ").splitlines() if line.strip()]
+    return " — ".join(lines[:2])[:300]
+
+
 def _failure(report: pytest.TestReport, rootpath: Path) -> tuple[str, str, int, str]:
     crash = getattr(report.longrepr, "reprcrash", None)
-    # A custom assert message comes first and pytest's comparison follows it, so keep both on one line.
-    message = " ".join((crash.message if crash else str(report.longrepr)).split())[:300]
+    raw = crash.message if crash else str(report.longrepr)
+    message = _headline(raw)
+    # An assertion in the test body is a collector-vs-truth finding; anything else is the harness or setup.
+    if report.when != "call" or not raw.startswith(("AssertionError", "assert ")):
+        message = f"[{report.when} error] {message}"
     location, line, _ = report.location
+    # The failing line (harness helpers hide their frames), else the test definition.
+    path, line = (crash.path, crash.lineno) if crash else (str(rootpath / location), (line or 0) + 1)
     # Relative to the repository, not pytest's rootdir, which path-like option values can move.
-    path = os.path.relpath(rootpath / location, REPO_ROOT)
+    path = os.path.relpath(path, REPO_ROOT)
     test = report.nodeid.split("::", 1)[-1] + ("" if report.when == "call" else f" ({report.when})")
-    return test, path, (line or 0) + 1, message
+    return test, path, line, message
+
+
+def pytest_assertrepr_compare(op: str, left: object, right: object) -> list[str] | None:
+    """Tests are written ``assert actual == expected``: name the sides and show only what differs."""
+
+    if op != "==":
+        return None
+    if isinstance(left, dict) and isinstance(right, dict):
+        absent = "<absent>"
+        keys = sorted(left.keys() | right.keys(), key=repr)
+        diff = [f"{k!r}: actual {left.get(k, absent)!r}, expected {right.get(k, absent)!r}" for k in keys if left.get(k, absent) != right.get(k, absent)]
+        return [f"{len(diff)} of {len(keys)} keys differ", *diff[:10], *([f"... and {len(diff) - 10} more"] if len(diff) > 10 else [])]
+    if isinstance(left, (set, frozenset)) and isinstance(right, (set, frozenset)):
+        missing, unexpected = sorted(right - left, key=repr), sorted(left - right, key=repr)
+        return [f"sets differ: missing {len(missing)}, unexpected {len(unexpected)}", *(f"missing {v!r}" for v in missing[:10]), *(f"unexpected {v!r}" for v in unexpected[:10])]
+    text = f"actual {left!r}, expected {right!r}"
+    return [text] if len(text) <= 300 else None
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
@@ -71,9 +100,10 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
         table, annotations = failure_digest(failures)
         for annotation in annotations:
             terminalreporter.write_line(annotation)
-        if summary_path := os.environ.get("GITHUB_STEP_SUMMARY"):
-            with open(summary_path, "a", encoding="utf-8") as summary_file:
-                summary_file.write(table)
+        # The workflow appends it to the job summary after the scenario heading.
+        if digest_path := os.environ.get("FAILURES_MD"):
+            Path(digest_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(digest_path).write_text(table, encoding="utf-8")
 
 
 def pytest_configure(config: pytest.Config) -> None:

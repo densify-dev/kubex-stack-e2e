@@ -60,15 +60,15 @@ class MetricGridTest(unittest.TestCase):
     IDS = [("c", "g1"), ("c", "g2")]
 
     def test_missing_and_unexpected_identities_are_named(self) -> None:
-        with self.assertRaisesRegex(AssertionError, r"missing \[\('c', 'g3'\)\], unexpected \[\('c', 'g2'\)\]"):
+        with self.assertRaisesRegex(AssertionError, r"missing    c/g3\n  unexpected c/g2"):
             assert_metric_grid(_table(*self.ROWS), KEYS, [("c", "g1"), ("c", "g3")], [T1, T2])
 
     def test_duplicate_sample_fails(self) -> None:
-        with self.assertRaisesRegex(AssertionError, "duplicate MetricTime"):
+        with self.assertRaisesRegex(AssertionError, r"c/g1: duplicate \['%s'\]" % T1):
             assert_metric_grid(_table(*self.ROWS, f"c,g1,{T1},9"), KEYS, self.IDS, [T1, T2])
 
     def test_missing_and_extra_timestamps_are_named_per_identity(self) -> None:
-        with self.assertRaisesRegex(AssertionError, r"'g2'.*missing \['%s'\]" % T2):
+        with self.assertRaisesRegex(AssertionError, r"c/g2: missing \['%s'\]" % T2):
             assert_metric_grid(_table(*self.ROWS[:3]), KEYS, self.IDS, [T1, T2])
         with self.assertRaisesRegex(AssertionError, r"unexpected \['2026-10-16T21:17:00Z'\]"):
             assert_metric_grid(_table(*self.ROWS, "c,g1,2026-10-16T21:17:00Z,1"), KEYS, self.IDS, [T1, T2])

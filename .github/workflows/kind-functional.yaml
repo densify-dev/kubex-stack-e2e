@@ -168,9 +168,11 @@ jobs:
 
       - name: Run functional scenario
         id: functional-scenario
+        env:
+          FAILURES_MD: artifacts/kind-functional/${{ matrix.scenario }}/failures.md
         run: |
           mkdir -p artifacts/kind-functional
-          python3 -m pytest "scenarios/${SCENARIO}" -v \
+          python3 -m pytest "scenarios/${SCENARIO}" -v --tb=short -o verbosity_assertions=0 \
             -m "${TIER}" \
             --junitxml="artifacts/kind-functional/${SCENARIO}-pytest.xml" \
             --stack-chart-version "${CHART_VERSION}" \
@@ -180,16 +182,26 @@ jobs:
         if: always()
         run: |
           summary="artifacts/kind-functional/${SCENARIO}/summary.md"
+          failures="artifacts/kind-functional/${SCENARIO}/failures.md"
           report="artifacts/kind-functional/${SCENARIO}-pytest.xml"
           mkdir -p "$(dirname "${summary}")"
           if [[ -f "${report}" ]]; then
             mv "${report}" "$(dirname "${summary}")/pytest.xml"
           fi
           if [[ -f "${summary}" ]]; then
-            printf '\n**Pytest status:** %s\n' "${{ steps.functional-scenario.outcome }}" >> "${summary}"
+            # The status goes under the scenario heading, the failure table after the run details.
+            {
+              head -n 2 "${summary}"
+              printf '**Pytest status:** %s\n\n' "${{ steps.functional-scenario.outcome }}"
+              tail -n +3 "${summary}"
+            } > "${summary}.new"
+            mv "${summary}.new" "${summary}"
             cat "${summary}" >> "${GITHUB_STEP_SUMMARY}"
           else
-            printf '# Scenario %s\n\n**Status:** failed before summary generation\n' "${SCENARIO}" >> "${GITHUB_STEP_SUMMARY}"
+            printf '# Scenario %s\n\n**Stack run:** failed before summary generation\n' "${SCENARIO}" >> "${GITHUB_STEP_SUMMARY}"
+          fi
+          if [[ -f "${failures}" ]]; then
+            { echo; cat "${failures}"; } >> "${GITHUB_STEP_SUMMARY}"
           fi
 
       - name: Upload scenario artifact

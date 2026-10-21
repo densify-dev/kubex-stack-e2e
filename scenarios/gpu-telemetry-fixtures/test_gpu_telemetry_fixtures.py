@@ -22,7 +22,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.archive import assert_metric_grid, expected_timestamps
+from harness.archive import assert_metric_grid, expected_timestamps, row_label
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.spec import (
     CLUSTER_NAME_PREFIX,
@@ -398,7 +398,7 @@ def test_container_gpu_request_and_limit_series(archive, path):
     assert_metric_grid(table, KEYS, IDENTITIES, _grid(archive))
     for row in table:
         want = getattr(INSTANCES[row["EntityName"], row["ContainerName"]][0], field)
-        assert float(row[column]) == pytest.approx(want, **EXACT), f"{path} {dict(row)}"
+        assert float(row[column]) == pytest.approx(want, **EXACT), f"{path} {row_label(row, KEYS)}"
 
 
 KUBEX_WORKLOAD_FILES = [
@@ -421,7 +421,7 @@ def test_kubex_workloads_match_the_fixture(archive, path):
     assert_metric_grid(table, KEYS, IDENTITIES, _grid(archive))
     for row in table:
         want, tolerance = _owner_truth(INSTANCES[row["EntityName"], row["ContainerName"]], aggregate)[key]
-        assert float(row[column]) == pytest.approx(want, **tolerance), f"{path} {dict(row)}"
+        assert float(row[column]) == pytest.approx(want, **tolerance), f"{path} {row_label(row, KEYS)}"
 
 
 # --- node/ and node_group/: DCGM without a Hostname ------------------------------

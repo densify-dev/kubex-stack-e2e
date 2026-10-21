@@ -17,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.archive import assert_metric_grid, expected_timestamps, label_map, prometheus_labels
+from harness.archive import assert_metric_grid, expected_timestamps, label_map, prometheus_labels, row_label
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.oracle import quantity
 from harness.spec import (
@@ -398,7 +398,7 @@ def _check_rows(archive, path, keys, identities, column, expected):
     table = archive.csv(path)
     assert_metric_grid(table, keys, identities, _grid(archive))
     for row in table:
-        assert float(row[column]) == pytest.approx(expected(row), **EXACT), f"{path} {dict(row)}"
+        assert float(row[column]) == pytest.approx(expected(row), **EXACT), f"{path} {row_label(row, keys)}"
 
 
 TARGETS = [*CONTAINERS, "others"]

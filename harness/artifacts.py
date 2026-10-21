@@ -96,7 +96,7 @@ def summary(
     coverage_warnings: Sequence[str] | None = None,
     **details: object,
 ) -> None:
-    lines = [f"# Scenario {scenario_name}", "", f"**Status:** {status}", ""]
+    lines = [f"# Scenario {scenario_name}", "", f"**Stack run:** {status}", ""]
     lines += _table(
         ("Version", "Value"),
         [(label, f"`{versions[key]}`" if versions.get(key) else "unknown") for key, label in _VERSION_LABELS.items()],
@@ -111,6 +111,10 @@ def summary(
 def _command_escape(value: str, *, property_value: bool = False) -> str:
     value = value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
     return value.replace(":", "%3A").replace(",", "%2C") if property_value else value
+
+
+# GitHub keeps at most 10 error annotations per step and drops the rest silently.
+ANNOTATION_LIMIT = 10
 
 
 def failure_digest(failures: Sequence[tuple[str, str, int, str]], shown: int = 5) -> tuple[str, list[str]]:
@@ -140,5 +144,8 @@ def failure_digest(failures: Sequence[tuple[str, str, int, str]], shown: int = 5
             f"::error file={_command_escape(file, property_value=True)},line={line},"
             f"title={_command_escape(', '.join(listed), property_value=True)}::{_command_escape(message)}"
         )
+    if len(annotations) > ANNOTATION_LIMIT:
+        hidden = sum(len(tests) for tests in list(grouped.values())[ANNOTATION_LIMIT - 1 :])
+        annotations = annotations[: ANNOTATION_LIMIT - 1] + [f"::error title={hidden} more failures::see the job summary table"]
     table = ["## Failed tests", "", f"{len(failures)} failed.", "", "| Test | Failure | Where |", "| --- | --- | --- |", *rows]
     return "\n".join(table) + "\n\n", annotations

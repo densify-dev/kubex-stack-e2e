@@ -156,6 +156,7 @@ class Csv:
         return iter(self.rows)
 
     def column(self, name: str) -> list[str]:
+        __tracebackhide__ = True
         if name not in self.headers:
             raise AssertionError(f"{self.path}: no column {name!r}; headers are {self.headers!r}")
         return [row[name] for row in self.rows]
@@ -167,6 +168,7 @@ class Csv:
         return [r for r in self.rows if all(r.get(k, "\x00missing") == v for k, v in wanted.items())]
 
     def one(self, **selector: str) -> dict[str, str]:
+        __tracebackhide__ = True
         matched = self.where(**selector)
         if len(matched) != 1:
             raise AssertionError(
@@ -235,13 +237,15 @@ class Archive:
         return path in self._files
 
     def raw(self, path: str) -> bytes:
+        __tracebackhide__ = True
         if path not in self._files:
-            raise AssertionError(f"archive has no file {path!r}; present: {self.paths}")
+            raise AssertionError(f"archive has no file {path!r} ({len(self._files)} files present)")
         return self._files[path]
 
     def csv(self, path: str) -> Csv:
         """Parse a CSV, with structural validation. Cached per path."""
 
+        __tracebackhide__ = True
         if path not in self._csv_cache:
             self._csv_cache[path] = parse_csv(path, self.raw(path))
         return self._csv_cache[path]
@@ -290,6 +294,7 @@ def load_directory(directory: Path) -> Archive:
 
 
 def assert_unique_keys(table: Csv, keys: Sequence[str]) -> None:
+    __tracebackhide__ = True
     missing = [k for k in keys if k not in table.headers]
     assert not missing, f"{table.path}: unique key column(s) missing: {', '.join(missing)}"
     seen: dict[tuple[str, ...], int] = {}
@@ -303,10 +308,17 @@ def assert_unique_keys(table: Csv, keys: Sequence[str]) -> None:
 
 
 def assert_distinct(table: Csv, column: str, expected: Sequence[str]) -> None:
+    __tracebackhide__ = True
     actual = sorted({row.get(column, "") for row in table.rows})
     assert actual == sorted(expected), (
         f"{table.path}: column {column!r} has distinct values {actual!r}, expected {sorted(expected)!r}"
     )
+
+
+def row_label(row: Mapping[str, str], keys: Sequence[str]) -> str:
+    """A row's identity for failure messages: key values joined by "/", then its MetricTime."""
+
+    return "/".join(row[k] for k in keys) + (f" at {row['MetricTime']}" if "MetricTime" in row else "")
 
 
 def label_map(cell: str) -> dict[str, str]:
@@ -357,25 +369,34 @@ def assert_metric_grid(
 ) -> None:
     """Exact identity set, unique (identity, MetricTime), and the same timestamp set per identity."""
 
+    __tracebackhide__ = True
     absent = [k for k in (*keys, "MetricTime") if k not in table.headers]
     assert not absent, f"{table.path}: grid column(s) missing: {', '.join(absent)}"
     expected = {tuple(identity) for identity in identities}
     seen: dict[tuple[str, ...], list[str]] = {}
     for row in table.rows:
         seen.setdefault(tuple(row[k] for k in keys), []).append(row["MetricTime"])
+    name = "/".join
     missing, unexpected = sorted(expected - seen.keys()), sorted(seen.keys() - expected)
-    assert not missing and not unexpected, (
-        f"{table.path}: identities by {list(keys)!r} differ: missing {missing!r}, unexpected {unexpected!r}"
-    )
+    if missing or unexpected:
+        raise AssertionError(
+            f"{table.path}: identities differ ({len(missing)} missing, {len(unexpected)} unexpected; key {'/'.join(keys)})"
+            + "".join(f"\n  missing    {name(i)}" for i in missing[:5])
+            + "".join(f"\n  unexpected {name(i)}" for i in unexpected[:5])
+        )
+    want = set(timestamps)
+    problems = []
     for identity, times in sorted(seen.items()):
         repeated = sorted({t for t in times if times.count(t) > 1})
-        assert not repeated, f"{table.path} {dict(zip(keys, identity))!r}: duplicate MetricTime {repeated!r}"
-    want = set(timestamps)
-    for identity, times in sorted(seen.items()):
         lost, extra = sorted(want - set(times)), sorted(set(times) - want)
-        assert not lost and not extra, (
-            f"{table.path} {dict(zip(keys, identity))!r}: MetricTime grid differs: "
-            f"missing {lost!r}, unexpected {extra!r}"
+        if repeated or lost or extra:
+            parts = [f"missing {lost}" if lost else "", f"unexpected {extra}" if extra else "", f"duplicate {repeated}" if repeated else ""]
+            problems.append(f"{name(identity)}: " + ", ".join(p for p in parts if p))
+    if problems:
+        raise AssertionError(
+            f"{table.path}: MetricTime grid ({len(want)} steps) differs for {len(problems)} of {len(seen)} identities"
+            + "".join(f"\n  {p}" for p in problems[:5])
+            + (f"\n  ... and {len(problems) - 5} more" if len(problems) > 5 else "")
         )
 
 

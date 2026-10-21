@@ -24,9 +24,13 @@ import urllib.request
 import zipfile
 from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
+
+import conftest
 
 from harness import artifacts as artifacts_mod
 from harness import run as run_mod
@@ -1047,6 +1051,46 @@ class OracleTest(unittest.TestCase):
         self.assertEqual(quantity("2Gi", "t"), 2 * 1024**3)
         with self.assertRaisesRegex(HarnessError, "invalid Kubernetes quantity"):
             quantity("12Zi", "t")
+
+
+class FailureOutputTest(unittest.TestCase):
+    def test_assertrepr_names_actual_and_expected(self) -> None:
+        compare = conftest.pytest_assertrepr_compare
+        self.assertEqual(compare("==", {"a": "1", "b": "2"}, {"a": "1", "b": "3"}), ["1 of 2 keys differ", "'b': actual '2', expected '3'"])
+        self.assertEqual(
+            compare("==", {"x": 1}, {"y": 1})[1:],
+            ["'x': actual 1, expected '<absent>'", "'y': actual '<absent>', expected 1"],
+        )
+        self.assertEqual(
+            compare("==", {1, 2}, {2, 3}), ["sets differ: missing 1, unexpected 1", "missing 3", "unexpected 1"]
+        )
+        self.assertEqual(compare("==", 2.0, pytest.approx(0.5, abs=1e-6)), ["actual 2.0, expected 0.5 ± 1.0e-06"])
+        self.assertIsNone(compare("==", "x" * 200, "y" * 200))
+        self.assertIsNone(compare("!=", 1, 2))
+
+    def test_failure_headline_and_prefix(self) -> None:
+        def failure(message: str, when: str = "call"):
+            crash = SimpleNamespace(message=message, path=str(conftest.REPO_ROOT / "s/t.py"), lineno=42)
+            report = SimpleNamespace(
+                longrepr=SimpleNamespace(reprcrash=crash), when=when, location=("s/t.py", 9, "t"), nodeid="s/t.py::test_x[a]"
+            )
+            return conftest._failure(report, conftest.REPO_ROOT)
+
+        self.assertEqual(
+            failure("AssertionError: a.csv at T\nassert actual 1, expected 2\nextra"),
+            ("test_x[a]", "s/t.py", 42, "a.csv at T — assert actual 1, expected 2"),
+        )
+        self.assertEqual(failure("assert actual 1, expected 2")[3], "assert actual 1, expected 2")
+        self.assertEqual(failure("KeyError: 'k'")[3], "[call error] KeyError: 'k'")
+        self.assertEqual(failure("RuntimeError: no cluster", "setup")[::3], ("test_x[a] (setup)", "[setup error] RuntimeError: no cluster"))
+
+    def test_failure_digest_caps_annotations(self) -> None:
+        _, annotations = artifacts_mod.failure_digest([(f"test_{i}", "s/t.py", i, f"message {i}") for i in range(15)])
+        self.assertEqual(len(annotations), artifacts_mod.ANNOTATION_LIMIT)
+        self.assertEqual(annotations[-1], "::error title=6 more failures::see the job summary table")
+        _, annotations = artifacts_mod.failure_digest([(f"test_{i}", "s/t.py", i, f"message {i}") for i in range(10)])
+        self.assertEqual(len(annotations), 10)
+        self.assertNotIn("more failures", annotations[-1])
 
 
 if __name__ == "__main__":
