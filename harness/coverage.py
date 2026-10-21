@@ -1,6 +1,6 @@
 """Coverage inventory: every CSV the collector can emit, its exact header, and what covers each column.
 
-Source of truth is collector v4.7.6 (file names from NewWorkloadMetricHolder in
+Source of truth is collector v4.8.0 (file names from NewWorkloadMetricHolder in
 internal/common/workload.go and the per-entity writers; headers from the Fprintln literals and
 generateCsvHeaderFormat in internal/common/output.go). Paths the live archive emits were checked
 against it. A column is one of: "key" (identity or time), "test:<path>::<function>[,<path>::<function>...]"
@@ -70,7 +70,7 @@ _CONTAINER_ATTRIBUTES = {
         ("GpuLimit", "GpuRequest", "GpuLimitFloat", "GpuRequestFloat", "GpuModel", "GpuSharingStrategy"),
         _t(_GDP + "test_container_gpu_attributes", _GTF + "test_container_gpu_attributes"),
     ),
-    "ContainerLabels": _t(_CR + "test_container_labels_carry_the_image"),
+    "ContainerLabels": _t(_CR + "test_container_labels_carry_the_image", _CR + "test_jvm_attributes_come_from_the_exporter"),
     "PodLabels": _t(_CR + "test_pod_labels"),
     **dict.fromkeys(("CpuLimit", "MemoryLimit", "MemoryRequest"), _t(_CR + "test_request_and_limit_attributes")),
     "CpuRequest": _t(_CR + "test_request_and_limit_attributes", _KR + "test_container_cpu_request_attribute"),
@@ -80,7 +80,11 @@ _CONTAINER_ATTRIBUTES = {
     "CreateTime": _t(_CR + "test_create_time"),
     "ContainerRestarts": _t(_CR + "test_container_restarts"),
     "QosClass": _t(_CR + "test_qos_class"),
-    "Runtimes": _t(_CR + "test_runtimes_come_from_the_survey"),
+    "Runtimes": _t(_CR + "test_runtimes_come_from_the_survey", _CR + "test_jvm_attributes_come_from_the_exporter"),
+    **dict.fromkeys(
+        ("JvmHeapInitMib", "JvmHeapMaxMib"),
+        _t(_CR + "test_jvm_attributes_come_from_the_exporter", _CR + "test_other_containers_have_no_jvm_heap"),
+    ),
     "NamespaceLabels": _t(_CR + "test_namespace_labels"),
     **dict.fromkeys(
         ("NamespaceCpuRequest", "NamespaceCpuLimit", "NamespaceMemoryRequest", "NamespaceMemoryLimit", "NamespacePodsLimit"),
@@ -102,7 +106,7 @@ _NODE_ATTRIBUTES = {
     **dict.fromkeys(("VirtualTechnology", "VirtualDomain", "OsArchitecture", "ProviderId", "K8sVersion"), _t(_NP + "test_node_attributes_identify_the_node")),
     **dict.fromkeys(("CpuLimit", "CpuRequest", "MemoryLimit", "MemoryRequest"), _t(_NP + "test_node_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES)),
     **dict.fromkeys(
-        [f"{kind}{name}" for kind in ("Capacity", "Allocatable") for name in ("Pods", "Cpu", "Memory", "EphemeralStorage")],
+        [f"{kind}{name}" for kind in ("Capacity", "Allocatable") for name in ("Pods", "Cpu", "CpuMcores", "Memory", "EphemeralStorage")],
         _t(_NP + "test_node_attribute_capacity_and_allocatable"),
     ),
     "NodeTaints": _t(_NP + "test_node_attribute_taints"),
@@ -161,7 +165,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "cluster/net_sent_packets.csv": _csv(CL + "NetSentPackets", NetSentPackets=_t(_NE + "test_values_match_the_fixture")),
     "cluster/net_total_packets.csv": _csv(CL + "NetTotalPackets", NetTotalPackets=_t(_NE + "test_values_match_the_fixture")),
     "node/config.csv": _csv("AuditTime,ClusterName,NodeName,HwModel,OsName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwMaxNetworkIoBps", **_NODE_CONFIG),
-    "node/attributes.csv": _csv("ClusterName,NodeName,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,OsArchitecture,NetworkSpeed,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,CapacityPods,CapacityCpu,CapacityMemory,CapacityGpu,CapacityEphemeralStorage,CapacityHugePages,AllocatablePods,AllocatableCpu,AllocatableMemory,AllocatableGpu,AllocatableEphemeralStorage,AllocatableHugePages,MemoryTotalBytes,GpuTotal,GpuMemoryTotal,GpuReplicas,ProviderId,K8sVersion,NodeLabels,GpuLabels,NodeTaints,GpuVendor,GpuModel,GpuSharingStrategy,GpuMpsCapable,GpuVgpuPresent,GpuMigCapable,GpuMigStrategy", **_NODE_ATTRIBUTES),
+    "node/attributes.csv": _csv("ClusterName,NodeName,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,OsArchitecture,NetworkSpeed,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,CapacityPods,CapacityCpu,CapacityCpuMcores,CapacityMemory,CapacityGpu,CapacityEphemeralStorage,CapacityHugePages,AllocatablePods,AllocatableCpu,AllocatableCpuMcores,AllocatableMemory,AllocatableGpu,AllocatableEphemeralStorage,AllocatableHugePages,MemoryTotalBytes,GpuTotal,GpuMemoryTotal,GpuReplicas,ProviderId,K8sVersion,NodeLabels,GpuLabels,NodeTaints,GpuVendor,GpuModel,GpuSharingStrategy,GpuMpsCapable,GpuVgpuPresent,GpuMigCapable,GpuMigStrategy", **_NODE_ATTRIBUTES),
     "node/cpu_limit.csv": _csv(NO + "CpuLimit", CpuLimit=_NODE_SERIES_TERMINAL),
     "node/cpu_request.csv": _csv(NO + "CpuRequest", CpuRequest=_NODE_SERIES_TERMINAL + "," + _KR + "test_worker_cpu_series"),
     "node/memory_limit.csv": _csv(NO + "MemoryLimit", MemoryLimit=_NODE_SERIES_TERMINAL),
@@ -232,7 +236,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "node_group/gpu_mem_used_avg.csv": _csv(NG + "GpuMemUsedAvg", GpuMemUsedAvg=_t(_GDP + "test_group_dcgm_series", _GTF + "test_dcgm_group_series_keep_the_scrape_node")),
     "node_group/gpu_power_usage_avg.csv": _csv(NG + "GpuPowerUsageAvg", GpuPowerUsageAvg=_t(_GDP + "test_group_dcgm_series", _GTF + "test_dcgm_group_series_keep_the_scrape_node")),
     "container/config.csv": _csv("AuditTime,ClusterName,Namespace,EntityName,EntityType,ContainerName,HwTotalMemory,GpuMemoryTotal,OsName,HwManufacturer", **dict.fromkeys(("HwTotalMemory", "OsName", "HwManufacturer"), _t(_CR + "test_container_config")), GpuMemoryTotal=_t(_GDP + "test_container_gpu_memory_total", _GTF + "test_container_gpu_memory_total")),
-    "container/attributes.csv": _csv("ClusterName,Namespace,EntityName,EntityType,ContainerName,ContainerType,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,ContainerLabels,PodLabels,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,GpuLimitFloat,GpuRequestFloat,CurrentNodes,PowerState,CreatedByKind,CreatedByName,CurrentSize,CreateTime,ContainerRestarts,NamespaceLabels,NamespaceCpuRequest,NamespaceCpuLimit,NamespaceMemoryRequest,NamespaceMemoryLimit,NamespacePodsLimit,HpaName,HpaLabels,HpaTargetMetricName,HpaTargetMetricType,HpaTargetMetricValue,HpaTargetMetrics,QosClass,GpuModel,GpuSharingStrategy,EphemeralStorageRequest,EphemeralStorageLimit,Runtimes", **dict.fromkeys(("EphemeralStorageRequest", "EphemeralStorageLimit"), _t(_EPH + "test_container_attributes_in_mib")), **_CONTAINER_ATTRIBUTES),
+    "container/attributes.csv": _csv("ClusterName,Namespace,EntityName,EntityType,ContainerName,ContainerType,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,ContainerLabels,PodLabels,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,GpuLimitFloat,GpuRequestFloat,CurrentNodes,PowerState,CreatedByKind,CreatedByName,CurrentSize,CreateTime,ContainerRestarts,NamespaceLabels,NamespaceCpuRequest,NamespaceCpuLimit,NamespaceMemoryRequest,NamespaceMemoryLimit,NamespacePodsLimit,HpaName,HpaLabels,HpaTargetMetricName,HpaTargetMetricType,HpaTargetMetricValue,HpaTargetMetrics,QosClass,GpuModel,GpuSharingStrategy,EphemeralStorageRequest,EphemeralStorageLimit,JvmHeapInitMib,JvmHeapMaxMib,Runtimes", **dict.fromkeys(("EphemeralStorageRequest", "EphemeralStorageLimit"), _t(_EPH + "test_container_attributes_in_mib")), **_CONTAINER_ATTRIBUTES),
     # IsPid1 is decode-only for restart events: the restart query encodes no pid1 (container/events.go:143-147)
     "container/events.csv": _csv("ClusterName,Namespace,EntityName,EntityType,ContainerName,EventTime,ExitCode,IsPid1", **dict.fromkeys(("ExitCode", "IsPid1"), _t(_CR + "test_restart_events"))),
     "container/current_size.csv": _csv(CO + "CurrentSize", CurrentSize=_t(_CR + "test_current_size_series_match_running_pods")),
@@ -244,6 +248,12 @@ INVENTORY: dict[str, dict[str, str]] = {
     "container/gpu_request.csv": _csv(CO + "GpuRequest", GpuRequest=_t(_GDP + "test_container_gpu_request_and_limit_series", _GTF + "test_container_gpu_request_and_limit_series")),
     "container/ephemeral_storage_limit.csv": _csv(CO + "EphemeralStorageLimit", EphemeralStorageLimit=_t(_EPH + "test_container_request_and_limit_series_in_bytes")),
     "container/ephemeral_storage_request.csv": _csv(CO + "EphemeralStorageRequest", EphemeralStorageRequest=_t(_EPH + "test_container_request_and_limit_series_in_bytes", _CR + "test_churn_request_series_cover_the_grid")),
+    **{
+        f"container/{agg}_{stem}.csv": _csv(CO + col, **{col: _t(_CR + "test_jvm_workloads_match_the_fixture")})
+        for stem in ("jvm_heap_used_mib", "jvm_non_heap_used_mib", "jvm_buffers_used_mib", "jvm_post_gc_used_mib", "jvm_thread_count", "jvm_gc_overhead_pct")
+        for agg in ("avg", "max")
+        for col in ["".join(w.capitalize() for w in f"{agg}_{stem}".split("_"))]
+    },
     "container/max_restarts.csv": _csv(CO + "MaxRestarts", MaxRestarts=_t(_CR + "test_max_restarts_match_restarts")),
     "container/avg_cpu_mcores_workload.csv": _csv(CO + "AvgCpuMcores", AvgCpuMcores=_CAD_USAGE),
     "container/avg_custom_cpu_mcores_workload.csv": _csv(CO + "AvgCustomCpuMcores", AvgCustomCpuMcores=_CAD_USAGE),

@@ -4,7 +4,8 @@ One namespace with a ResourceQuota holds every kind of owner the collector resol
 StatefulSet, DaemonSet, Job, CronJob and bare Pods), a native sidecar and a standard init container,
 a pod that restarted once, and a completed Job and a failed Pod that stay in the API. Every expected
 value comes from what Kubernetes reports about those objects (pod specs, owner objects, quota status),
-captured in the snapshots, or from the fixture that stands in for Beyla.
+captured in the snapshots, or from the fixture that stands in for Beyla. A fixture in `cr-jvm`, scraped by the
+chart's JVM job, stands in for a JMX-exporter JVM that Beyla also surveys.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pathlib import Path
 
 import pytest
 
-from harness.archive import Csv, assert_metric_grid, expected_timestamps, label_map, prometheus_labels
+from harness.archive import Csv, assert_metric_grid, expected_timestamps, label_map, prometheus_labels, row_label
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.oracle import quantity
 from harness.spec import (
@@ -60,15 +61,15 @@ RUNTIMES = {("web", "app"): "go", ("db", "db"): "java"}
 KINDS = {"web": "Deployment", "db": "StatefulSet"}
 
 
-def _survey(entity, container, language):
+def _survey(entity, container, language, namespace=NAMESPACE, kind=None):
     return Metric(
         "survey_info",
         "gauge",
         1.0,
         labels={
             "k8s_node_name": W1,
-            "k8s_namespace_name": NAMESPACE,
-            "k8s_kind": KINDS[entity],
+            "k8s_namespace_name": namespace,
+            "k8s_kind": kind or KINDS[entity],
             "k8s_owner_name": entity,
             "k8s_container_name": container,
             "telemetry_sdk_language": language,
@@ -99,6 +100,47 @@ CONTAINER_FILES = (
     "max_mem_workload", "avg_rss_workload", "max_rss_workload", "avg_ws_workload", "max_ws_workload",
 )  # fmt: skip
 
+
+# A JMX-exporter JVM in cr-jvm, scraped by the chart's kubex-jvm-endpoint job, which attaches namespace, pod and container
+JVM_NAMESPACE = "cr-jvm"
+JVM_SERVICE = "jvm-app"
+JVM_ENTITY, JVM_CONTAINER = f"{JVM_SERVICE}-fixture", "metrics"  # names fixtures.py gives the fixture Deployment and container
+JVM_SELECTOR = {"stack-e2e.kubex.ai/app-runtime": "jvm"}  # Service label the chart's kubex-jvm-endpoint job selects
+JVM_RUNTIME = {"runtime": "OpenJDK Runtime Environment", "vendor": "Eclipse Adoptium", "version": "21.0.5+11-LTS"}
+JVM_HEAP = {"init": int(256.5 * MIB), "max": int(1024.25 * MIB)}  # fractional MiB, so truncation shows
+JVM_NON_HEAP = {"init": 2048 * MIB, "max": 4096 * MIB}  # larger than heap, so a lost area filter shows
+JVM_USED = {"heap": 300 * MIB, "nonheap": int(96.5 * MIB)}
+JVM_BUFFERS = {"direct": 8 * MIB, "mapped": MIB // 2}
+JVM_POST_GC = {"G1 Eden Space": 0, "G1 Old Gen": 120 * MIB, "G1 Survivor Space": 4 * MIB}
+JVM_THREADS = 42
+# collector: (seconds_sum start, seconds per second, collection_count start, collections per second); starts > 0 so rate() never extrapolates to zero
+JVM_GC = {"G1 Young Generation": (12.5, 0.02, 250.0, 0.5), "G1 Old Generation": (3.0, 0.005, 2.0, 0.01)}
+
+
+def _jvm_series():
+    """JMX exporter v1.x names; only exporter-native labels, the chart's scrape adds the pod's identity."""
+
+    def gauge(name, value, **labels):
+        return Metric(name, "gauge", float(value), labels=labels)
+
+    series = [
+        gauge("jvm_runtime_info", 1, **JVM_RUNTIME),
+        *(gauge("jvm_memory_init_bytes", v["init"], area=a) for a, v in (("heap", JVM_HEAP), ("nonheap", JVM_NON_HEAP))),
+        *(gauge("jvm_memory_max_bytes", v["max"], area=a) for a, v in (("heap", JVM_HEAP), ("nonheap", JVM_NON_HEAP))),
+        *(gauge("jvm_memory_used_bytes", v, area=a) for a, v in JVM_USED.items()),
+        *(gauge("jvm_buffer_pool_used_bytes", v, pool=p) for p, v in JVM_BUFFERS.items()),
+        *(gauge("jvm_memory_pool_collection_used_bytes", v, pool=p) for p, v in JVM_POST_GC.items()),
+        gauge("jvm_threads_current", JVM_THREADS),
+    ]
+    for gc, (seconds, seconds_rate, count, count_rate) in JVM_GC.items():
+        series.append(Metric("jvm_gc_collection_seconds_sum", "counter", seconds, labels={"gc": gc}, rate=seconds_rate))
+        series.append(Metric("jvm_gc_collection_seconds_count", "counter", count, labels={"gc": gc}, rate=count_rate))  # detection only
+    return series
+
+
+JVM_STEMS = ("jvm_heap_used_mib", "jvm_non_heap_used_mib", "jvm_buffers_used_mib", "jvm_post_gc_used_mib", "jvm_thread_count", "jvm_gc_overhead_pct")
+JVM_FILES = [f"container/{agg}_{stem}.csv" for stem in JVM_STEMS for agg in ("avg", "max")]
+
 SCENARIO = ScenarioSpec(
     name=NAME,
     cluster=CLUSTER_SPEC,
@@ -110,6 +152,7 @@ SCENARIO = ScenarioSpec(
             "node-labeler": {"enabled": False},
             "k8s-ephemeral-storage-metrics": {"enabled": False},
             "prometheus": {
+                "appScrapeConfigs": {"jvm": {"serviceLabels": dict(JVM_SELECTOR)}},
                 "prometheus-node-exporter": {"enabled": False},
                 "server": {
                     "nodeSelector": _SYSTEM_NODE,
@@ -133,7 +176,16 @@ SCENARIO = ScenarioSpec(
         },
     ),
     # The chart's Beyla is disabled; a Service with its name is a kept target (EndpointSlice "kubex-beyla-...").
-    fixtures=[FixtureService(name="kubex-beyla", metrics=[_survey(e, c, lang) for (e, c), lang in RUNTIMES.items()])],
+    fixtures=[
+        FixtureService(
+            name="kubex-beyla",
+            metrics=[
+                *(_survey(e, c, lang) for (e, c), lang in RUNTIMES.items()),
+                _survey(JVM_ENTITY, JVM_CONTAINER, "java", namespace=JVM_NAMESPACE, kind="Deployment"),
+            ],
+        ),
+        FixtureService(name=JVM_SERVICE, namespace=JVM_NAMESPACE, port=9404, labels=JVM_SELECTOR, node=W1, metrics=_jvm_series()),
+    ],
     prometheus=PrometheusSpec(
         queries=[
             _query("running", f'kube_pod_status_phase{{namespace="{NAMESPACE}",phase="Running"}} == 1', 9),
@@ -154,6 +206,11 @@ SCENARIO = ScenarioSpec(
                 for key, value in QUOTA_USED.items()
             ),
             _query("survey", f'survey_info{{k8s_namespace_name="{NAMESPACE}"}}', 2),
+            # the chart's JVM job scraped the pod, kept every family the collector reads, and attached the pod's identity
+            _query("jvm-families", f'count by (__name__) ({{__name__=~"jvm_.*",job="kubex-jvm-endpoint",namespace="{JVM_NAMESPACE}",container="{JVM_CONTAINER}"}})', 9),
+            # two gc samples per collector before the window: rate(...[1m20s]) has two samples at the first grid step
+            _query("jvm-gc-history", f'count_over_time(jvm_gc_collection_seconds_sum{{job="kubex-jvm-endpoint",namespace="{JVM_NAMESPACE}"}}[1m]) >= 2', len(JVM_GC)),
+            _query("jvm-survey", f'survey_info{{k8s_namespace_name="{JVM_NAMESPACE}"}}', 1),
         ],
     ),
     forwarder=ForwarderSpec(
@@ -177,6 +234,7 @@ SCENARIO = ScenarioSpec(
                 "cluster/memory_requests.csv",
                 "cluster/memory_reservation_percent.csv",
                 *(f"container/{name}.csv" for name in (*CONTAINER_FILES, "events", "ephemeral_storage_request")),
+                *JVM_FILES,
                 "node/attributes.csv",
                 "node/config.csv",
                 "node/cpu_limit.csv",
@@ -821,3 +879,62 @@ def test_power_state_of_owners_with_finished_pods(archive, oracle, entity):
     assert any(start <= at and (end is None or end > at) for start, end in spans), f"no {entity} pod running at {at}: {spans}"
     rows = _ours(archive, "container/attributes.csv", CHURN).where(EntityName=entity)
     assert [(r["EntityType"], r["ContainerName"], r["PowerState"]) for r in rows] == [(FINISHED_AND_RUNNING[entity], entity, "Running")]
+
+
+# --- container/: JVM exporter -------------------------------------------------
+# One pod serves the JVM series, so the owner's average and maximum are the pod's value. Every expected value derives
+# from the fixture constants; the hand-computed check below catches a constant edited without its consequences.
+
+JVM_EXACT = {"abs": TOLERANCE}  # gauges and their sums, printed with %f
+JVM_RATE = {"rel": 1e-2}  # rate() of a constant-rate counter: scrape-latency jitter only (~1e-4); a lost collector moves it by 20 %
+JVM_WORKLOADS = {  # stem: (value, tolerance)
+    "jvm_heap_used_mib": (JVM_USED["heap"] / MIB, JVM_EXACT),
+    "jvm_non_heap_used_mib": (JVM_USED["nonheap"] / MIB, JVM_EXACT),
+    "jvm_buffers_used_mib": (sum(JVM_BUFFERS.values()) / MIB, JVM_EXACT),
+    "jvm_post_gc_used_mib": (sum(JVM_POST_GC.values()) / MIB, JVM_EXACT),
+    "jvm_thread_count": (JVM_THREADS, JVM_EXACT),
+    "jvm_gc_overhead_pct": (100 * sum(rate for _, rate, _, _ in JVM_GC.values()), JVM_RATE),
+}
+assert {k: v for k, (v, _) in JVM_WORKLOADS.items()} == pytest.approx(
+    {"jvm_heap_used_mib": 300, "jvm_non_heap_used_mib": 96.5, "jvm_buffers_used_mib": 8.5,
+     "jvm_post_gc_used_mib": 124, "jvm_thread_count": 42, "jvm_gc_overhead_pct": 2.5}
+)  # fmt: skip
+JVM_IDENTITY = (CLUSTER, JVM_NAMESPACE, JVM_ENTITY, "Deployment", JVM_CONTAINER)
+
+
+def test_jvm_attributes_come_from_the_exporter(archive):
+    """Heap sizes in float MiB and the runtime details from the JMX series (container/collection.go:293-330,
+    container/output.go:213-235). Beyla also surveys this container as java; the exporter's entry replaces it by name
+    (container/runtime.go:62-72), so there is one runtime, not two."""
+
+    row = _ours(archive, "container/attributes.csv", JVM_NAMESPACE).one(EntityName=JVM_ENTITY, ContainerName=JVM_CONTAINER)
+    assert row["EntityType"] == "Deployment"
+    assert row["JvmHeapInitMib"] == f"{JVM_HEAP['init'] / MIB:f}"
+    assert row["JvmHeapMaxMib"] == f"{JVM_HEAP['max'] / MIB:f}"
+    details = {"type": "java", "data": {"name": JVM_RUNTIME["runtime"], "vendor": JVM_RUNTIME["vendor"]}}
+    assert json.loads(row["Runtimes"]) == [{"name": "java", "version": JVM_RUNTIME["version"], "runtimeDetails": details}]
+    assert label_map(row["ContainerLabels"])["runtime.kubex.ai"] == "java"
+
+
+def test_other_containers_have_no_jvm_heap(archive):
+    """db is surveyed as java but exports no JVM series, so it has no runtime details and no heap
+    (container/output.go:213-219)."""
+
+    table = archive.csv("container/attributes.csv")
+    others = [r for r in table if (r["Namespace"], r["EntityName"], r["ContainerName"]) != (JVM_NAMESPACE, JVM_ENTITY, JVM_CONTAINER)]
+    assert others
+    assert [row_label(r, KEYS) for r in others if r["JvmHeapInitMib"] or r["JvmHeapMaxMib"]] == []
+
+
+@pytest.mark.parametrize("path", JVM_FILES)
+def test_jvm_workloads_match_the_fixture(archive, path):
+    """Memory files are MiB for both aggregators (container/jvm.go:134-137). The GC file is the rate at each step, not an
+    `_over_time` (container/jvm.go:147-150)."""
+
+    agg, stem = path.removeprefix("container/").removesuffix(".csv").split("_", 1)
+    column = "".join(word.capitalize() for word in f"{agg}_{stem}".split("_"))
+    want, tolerance = JVM_WORKLOADS[stem]
+    table = archive.csv(path)
+    assert_metric_grid(table, KEYS, [JVM_IDENTITY], _grid(archive))
+    for row in table:
+        assert float(row[column]) == pytest.approx(want, **tolerance), f"{path} {row_label(row, KEYS)}"

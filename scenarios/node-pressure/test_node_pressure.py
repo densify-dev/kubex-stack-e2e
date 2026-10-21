@@ -378,17 +378,18 @@ def test_node_attribute_requests_and_limits(archive, oracle, name, column, calcu
 
 @pytest.mark.parametrize("name", NODES)
 def test_node_attribute_capacity_and_allocatable(archive, oracle, name):
-    """Exactly what Kubernetes reports: pods as a count, CPU in cores, memory and ephemeral storage in bytes."""
+    """Exactly what Kubernetes reports: pods as a count, CPU in millicores and cores, memory and ephemeral storage in bytes."""
 
     row = _attributes(archive, name)
     for field, prefix in (("capacity", "Capacity"), ("allocatable", "Allocatable")):
-        for resource, column in (
-            ("pods", "Pods"),
-            ("cpu", "Cpu"),
-            ("memory", "Memory"),
-            ("ephemeral-storage", "EphemeralStorage"),
+        for resource, column, factor in (
+            ("pods", "Pods", 1),
+            ("cpu", "CpuMcores", 1000),
+            ("cpu", "Cpu", 1),
+            ("memory", "Memory", 1),
+            ("ephemeral-storage", "EphemeralStorage", 1),
         ):
-            expected = quantity(_spec_of(oracle, name)["status"][field][resource], f"{name} {field} {resource}")
+            expected = quantity(_spec_of(oracle, name)["status"][field][resource], f"{name} {field} {resource}") * factor
             assert Decimal(row[prefix + column]) == expected, f"{prefix}{column} of {name}"
 
 
