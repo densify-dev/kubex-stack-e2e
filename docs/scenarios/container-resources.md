@@ -105,16 +105,6 @@ jvm_memory_max_bytes{area="heap"},1074003968,JvmHeapMaxMib,1024.250000
 The 12 files `container/avg_<stem>.csv` and `max_<stem>.csv` hold the pod's value in every grid row. Memory
 stems are MiB (bytes / 2^20). GC overhead is the summed rate of `jvm_gc_collection_seconds_sum` times 100.
 
-```csv
-stem,fixture input,value
-jvm_heap_used_mib,300 MiB,300
-jvm_non_heap_used_mib,96.5 MiB,96.5
-jvm_buffers_used_mib,8 + 0.5 MiB in two pools,8.5
-jvm_post_gc_used_mib,0 + 120 + 4 MiB in three pools,124
-jvm_thread_count,42 threads,42
-jvm_gc_overhead_pct,(0.02 + 0.005) s of GC per second,2.5
-```
-
 ## Truth sources
 
 | Source | Used for |
@@ -193,13 +183,6 @@ jvm_gc_overhead_pct,(0.02 + 0.005) s of GC per second,2.5
 - kube-state-metrics v1 request series are not served. The chart deploys v2.
 - `cr-workload` has one quota, so the choice between two quotas with different keys is not checked.
 - No Deployment is updated in the window, so `CurrentSize` during a rolling update is not checked.
-
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/container-resources -v --tb=short
-.venv/bin/python -m pytest scenarios/container-resources --replay <artifact-dir> -q --tb=short
-```
 
 ## Extend
 

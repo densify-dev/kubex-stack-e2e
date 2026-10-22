@@ -99,7 +99,6 @@ The group has one member, so each value equals the node's.
 | Kubernetes snapshots (`run.snapshots`, `oracle.primary`) | The worker's sharing strategy label |
 | Oracle | Not used |
 | Fixture series (`SHARES`, `DCGM`, `_truth`, `_owner_truth`, `DCGM_NODE`) | Container requests, limits, utilization, memory, model, and the node and group DCGM values |
-| Collector grid (`expected_timestamps`) | `MetricTime` steps of every series |
 
 ## Tests
 
@@ -130,16 +129,6 @@ series for containers.
 - Fixture values are constant, so a GPU memory peak between two minute marks never shows. Whether the
   `max` memory files sample at the scrape interval is not checked.
 
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/gpu-telemetry-fixtures -v --tb=short
-.venv/bin/python -m pytest scenarios/gpu-telemetry-fixtures --replay <artifact-dir> -q --tb=short
-```
-
-`files` is `BASE_FILES` (the same set as node-pressure) plus the 18 `GPU_FILES`. The module asserts
-both counts.
-
 ## Extend
 
 - **New share or replica.** Add a `Share` to `SHARES` and the workload to `workload.yaml`. `INSTANCES`,
@@ -147,6 +136,4 @@ both counts.
   `pods-running` and `owners` counts, and the hand-computed `assert` blocks.
 - **New DCGM value.** Change `DCGM` and `DCGM_NODE`. Keep it different from the Kubex values so the test
   can tell the sources apart.
-- Coverage inventory entries reference this module through the `_GTF` prefix in
-  [`harness/coverage.py`](../../harness/coverage.py).
 - Follow [extending.md](../extending.md) for the general steps.

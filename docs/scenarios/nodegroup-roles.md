@@ -83,7 +83,6 @@ from `on-worker` plus the system pods on `worker`.
 | Kubernetes snapshots (`run.snapshots`, `oracle.primary`) | Member nodes' labels, capacity and OS |
 | Oracle (`oracle.requests` / `limits` / `capacity` / `reservation_percent`, selected by `expect-group`) | Group requests, limits, capacity and reservation percent |
 | Fixture series | none |
-| Collector grid (`expected_timestamps`) | `MetricTime` steps of every series |
 
 `MEMBERS` in the module maps each group to its expected node, and `UNGROUPED` is `worker3`.
 
@@ -102,7 +101,6 @@ from `on-worker` plus the system pods on `worker`.
 | `test_entity_tables_hold_exactly_the_three_groups` | `config.csv` and `attributes.csv` hold `control-plane`, `infra` and `gpu` once each. No `worker`, no default group. | `MEMBERS` | A group is invented, missing or duplicated, or a claimed role forms a group |
 | `test_time_series_follow_the_collector_grid` | Five series have the three groups on every grid step | grid | Missing group or steps |
 | `test_group_membership` | `VirtualTechnology` is `NodeGroup`, `CurrentNodes` and `CurrentSize` match `MEMBERS` | `MEMBERS` | Wrong membership or the wrong role wins |
-| `test_a_node_without_a_role_is_in_no_group` | `worker3` is in no group's `CurrentNodes` | `MEMBERS` | A role-less node is grouped |
 | `test_current_size_holds_for_every_sample` | `current_size.csv` equals each group's member count at every step | `MEMBERS` | Size wrong or drifts |
 
 ### node_group/ values
@@ -122,19 +120,10 @@ from `on-worker` plus the system pods on `worker`.
   node with an extra role could land in two groups, is not checked.
 - A node with several unconfigured roles. The collector allows one, so the case is not set up.
 
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/nodegroup-roles -v --tb=short
-.venv/bin/python -m pytest scenarios/nodegroup-roles --replay <artifact-dir> -q --tb=short
-```
-
 ## Extend
 
 - **New role case.** Add the node to `ClusterSpec` with its `roles` and `expect-group` label, a pinned
   pod in `workload.yaml`, and an entry in `MEMBERS` (or `UNGROUPED`). Update the `node-roles`,
   `node-allocatable-resources` and `workload-*` readiness counts.
 - **Change `role_list`.** Edit the forwarder `config.collection.role_list` and the expected groups together.
-- Coverage inventory entries reference this module through the `_NGR` prefix in
-  [`harness/coverage.py`](../../harness/coverage.py).
 - Follow [extending.md](../extending.md) for the general steps.

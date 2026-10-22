@@ -22,7 +22,7 @@ Code: [`test_<scenario_name>.py`](../../scenarios/<scenario-name>/test_<scenario
 | Workloads | <owners in workload.yaml, namespaces, where they are pinned> |
 | Fixtures | <FixtureService names and what they stand in for, or "none"> |
 | Collector settings | <Collection(interval, interval_size, history, sample_rate) and notable helm_overrides> |
-| Window | <window_seconds, or "derived"> |
+| Window | <window_seconds> |
 | Readiness gates | <the PrometheusQuery names that must hold before the window> |
 | Snapshots | <snapshot_resources beyond nodes and pods> |
 
@@ -62,7 +62,6 @@ names (worker, worker2) and state the units the tests assert.>
 | Kubernetes snapshots (`run.snapshots`, `oracle.primary`) | <which fields> |
 | Oracle (`oracle.requests` / `limits` / `capacity` / `reservation_percent` / `pod_count`) | <which totals> |
 | Fixture series (`Metric` definitions in the module) | <which usage values> |
-| Collector grid (`expected_timestamps`) | `MetricTime` steps of every series |
 
 ## Tests
 
@@ -89,17 +88,7 @@ independent truth. Describe behaviour in plain words. Leave the whole section ou
 
 - <What the suite does not check, and why.>
 
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/<scenario-name> -v --tb=short
-.venv/bin/python -m pytest scenarios/<scenario-name> --replay <artifact-dir> -q --tb=short
-```
-
-<Scenario-specific notes: runtime, anything that makes a local run differ from CI.>
-
 ## Extend
 
 - <Where to add a workload or series and which constants to update.>
-- <Which inventory entries in harness/coverage.py reference this scenario.>
 - Follow [extending.md](../extending.md) for the general steps.

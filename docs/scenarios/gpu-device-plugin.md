@@ -124,7 +124,6 @@ container.
 | Kubernetes snapshots (`run.snapshots`, `oracle.primary`) | Node capacity and allocatable GPU, container GPU requests and limits, GPU labels |
 | Oracle (`oracle.requests` / `limits` / `reservation_percent` with `nvidia.com/gpu`) | Node, group and cluster GPU requests, limits and reservation percent |
 | Fixture series (`GPUS`, `_container_truth`, `_owner_truth`, `_node_truth`, `_group_truth`) | Every DCGM value at node, group and container level |
-| Collector grid (`expected_timestamps`) | `MetricTime` steps of every series |
 
 ## Tests
 
@@ -169,16 +168,6 @@ container.
 - The one node without the `nvidia.com/gpu.memory` label (`worker2`) holds one GPU, so a memory total
   per GPU and a memory total per node look the same. A multi-GPU node without the label is not set up.
 
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/gpu-device-plugin -v --tb=short
-.venv/bin/python -m pytest scenarios/gpu-device-plugin --replay <artifact-dir> -q --tb=short
-```
-
-`files` is `BASE_FILES` (the same set as node-pressure) plus the 28 `GPU_FILES`. The module asserts
-both counts.
-
 ## Extend
 
 - **New GPU or node.** Add a row to `GPUS` and its labels and `extended_resources` to `CLUSTER_SPEC`.
@@ -186,6 +175,4 @@ both counts.
   readiness counts.
 - **New GPU container.** Add the workload, then `CONTAINERS` (entity, container to pods), `_TRAINER` or
   `_INFER`-style truth, and the `pods-running` and `owners` counts.
-- Coverage inventory entries reference this module through the `_GDP` prefix in
-  [`harness/coverage.py`](../../harness/coverage.py).
 - Follow [extending.md](../extending.md) for the general steps.

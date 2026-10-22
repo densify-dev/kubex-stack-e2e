@@ -78,7 +78,6 @@ quota. For `node/cpu_reservation_percent.csv`, the worker's value is its request
 | Kubernetes snapshots (`run.snapshots`, `oracle.primary`) | `web` and `done` pod specs and phases, kube-state-metrics pods running, `ksmr-quota` `status.used` |
 | Oracle (`oracle.requests` / `reservation_percent`, `cpu`) | Worker CPU request and reservation percent |
 | Fixture series | none |
-| Collector grid (`expected_timestamps`) | `MetricTime` steps of every series |
 
 ## Tests
 
@@ -114,21 +113,10 @@ quota. For `node/cpu_reservation_percent.csv`, the worker's value is its request
   second series per taint. The suite does not change the cluster in the window.
 - `HpaTargetMetrics` after a restart, for the same reason. This scenario has no HPA.
 
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/ksm-replicas -v --tb=short
-.venv/bin/python -m pytest scenarios/ksm-replicas --replay <artifact-dir> -q --tb=short
-```
-
-`files` is the node-pressure set (`BASE_FILES`) plus the three `RQ_FILES`.
-
 ## Extend
 
 - **New duplicated metric.** Add an entity to `workload.yaml` and to `CONTAINERS`, then a test that reads
   the file where the metric lands. Keep the quota on a single resource key. If the entity requests CPU
   in `ksmr-workload`, update `QUOTA_USED_CPU`.
-- **New file.** Add it to `BASE_FILES` or `RQ_FILES`.
-- Coverage inventory entries reference this module through the `_KR` prefix in
-  [`harness/coverage.py`](../../harness/coverage.py).
+- **New file.** Add it to `RQ_FILES`.
 - Follow [extending.md](../extending.md) for the general steps.

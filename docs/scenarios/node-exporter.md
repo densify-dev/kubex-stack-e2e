@@ -14,7 +14,7 @@ Code: [`test_node_exporter.py`](../../scenarios/node-exporter/test_node_exporter
 - Devices the collector filters out are served with rates far above the real ones: a `dm-0` disk, a
   `veth` NIC with a huge link speed, and the loopback. A missing filter changes the totals or the speed.
 - Working-set utilization divides by Kubernetes allocatable memory, not by the exporter's `MemTotal`.
-- The collector detects the exporter and records each node's maximum network speed.
+- The collector detects the exporter (a missing exporter fails `test_expected_files`) and records each node's maximum network speed.
 
 ## Setup
 
@@ -99,15 +99,8 @@ Utilization is that over the node's Kubernetes allocatable memory, in percent.
 | Kubernetes snapshots (`oracle.primary`) | Node allocatable memory |
 | Oracle | Not used for totals |
 | Fixture series (`CPU`, `MEMORY`, `SPEED`, `DISKS`, `NICS`, `OOM_KILLS`, `THROTTLES`, `SCALE`) | Every exporter value. `FAMILIES` maps each file to a formula and a combine rule. |
-| Collector grid (`expected_timestamps`) | `MetricTime` steps of every series |
 
 ## Tests
-
-### Exporter detection
-
-| Test | Asserts | Truth | A failure means |
-| --- | --- | --- | --- |
-| `test_node_exporter_is_detected` | `log.txt` has no "prometheus node exporter metrics not present" line | log | The collector did not find the exporter series and wrote no exporter files |
 
 ### node/, node_group/ and cluster/ exporter files
 
@@ -138,15 +131,6 @@ ratios) and `COUNT` (event counts, exact whole numbers).
 - `MemoryWs` values come from real cAdvisor, which has no independent truth. Their grid is checked, and
   `MemoryWsUtilization` is checked against them.
 
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/node-exporter -v --tb=short
-.venv/bin/python -m pytest scenarios/node-exporter --replay <artifact-dir> -q --tb=short
-```
-
-`files` is the node-pressure set plus `EXPORTER_FILES`.
-
 ## Extend
 
 - **New family.** Add a row to `FAMILIES` with its formula and combine rule (`None` for node-only), and
@@ -154,6 +138,4 @@ ratios) and `COUNT` (event counts, exact whole numbers).
   updating.
 - **New node.** Add it to `CLUSTER_SPEC` and to `SCALE`, `CPU`, `MEMORY` and `SPEED`, and update the
   readiness counts.
-- Coverage inventory entries reference this module through the `_NE` prefix in
-  [`harness/coverage.py`](../../harness/coverage.py).
 - Follow [extending.md](../extending.md) for the general steps.

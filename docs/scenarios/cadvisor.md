@@ -96,22 +96,11 @@ Tolerances are the constants `RATE` and `EXACT` in the module. Counter-derived C
 seconds differ from the fixture rate by scrape jitter, so `RATE` allows 1 %. Gauges and ratios of
 increases from one scrape are exact to the `%f` print error.
 
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/cadvisor -v --tb=short
-.venv/bin/python -m pytest scenarios/cadvisor --replay <artifact-dir> -q --tb=short
-```
-
-The live run waits out the 240 s window. Replay takes about a second.
-
 ## Extend
 
 - **New pod or container.** Add it to `workload.yaml`, to `USAGE` and `OWNERS`, and to `IDENTITIES`.
   Raise the `min_results` of the `fixture-cpu` and `fixture-custom` readiness queries and of
   `pods-running`.
 - **New usage file.** Add a row to `FAMILIES` (the module asserts the hand-computed `burst/app` values
-  for each family) and list the file in `NEW_FILES` or `BASE_FILES`.
-- Coverage inventory entries point at `test_usage_matches_the_fixture` through `_CAD_USAGE` (the `_CAD`
-  prefix) in [`harness/coverage.py`](../../harness/coverage.py).
+  for each family) and list the file in `NEW_FILES`.
 - Follow [extending.md](../extending.md) for the general steps.

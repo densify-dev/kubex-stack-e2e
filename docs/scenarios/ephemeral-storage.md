@@ -14,7 +14,7 @@ Code: [`test_ephemeral_storage.py`](../../scenarios/ephemeral-storage/test_ephem
 - Container usage is rootfs plus logs plus volumes. A volume that both containers mount is counted once
   per pod, so the two containers differ by exactly that volume's size.
 - Container request and limit series are in bytes, and the attributes hold whole MiB.
-- The collector detects the exporter. Without it the usage files are missing.
+- The collector detects the exporter. Without it the usage files are missing, which `test_expected_files` reports.
 
 ## Setup
 
@@ -92,7 +92,6 @@ matter, but exactly one does.
 | Kubernetes snapshots (`oracle.primary`) | Node capacity and allocatable, container requests and limits in `eph-0` |
 | Oracle (`oracle.requests` / `limits` / `reservation_percent` with `ephemeral-storage`) | Node request, limit and reservation percent |
 | Fixture series (`NODE_STORAGE`, `ROOTFS`, `LOGS`, `VOLUMES`, `OWN`, `SHARED`) | Node and container usage |
-| Collector grid (`expected_timestamps`) | `MetricTime` steps of every series |
 
 ## Tests
 
@@ -101,12 +100,6 @@ matter, but exactly one does.
 | Test | Asserts | Truth | A failure means |
 | --- | --- | --- | --- |
 | `test_reserved_worker_has_less_allocatable_storage` | Worker 1 loses exactly 1Gi more between capacity and allocatable than worker 2 | snapshot | The reservation did not apply. Utilization tests cannot tell capacity from allocatable. |
-
-### Exporter detection
-
-| Test | Asserts | Truth | A failure means |
-| --- | --- | --- | --- |
-| `test_ephemeral_exporter_is_detected` | `log.txt` has no "Ephemeral storage exporter metrics not present" line | log | The collector did not find the exporter series and skipped the usage files |
 
 ### node/ and container/ grids
 
@@ -126,19 +119,8 @@ matter, but exactly one does.
 | Test | Asserts | Truth | A failure means |
 | --- | --- | --- | --- |
 | `test_container_usage_counts_each_volume_once` | In the average and maximum files, each container's usage differs from `OWN` by a steady offset, and the offsets are 0 and `SHARED` | fixture | The shared volume is counted twice, for neither container, or the usage drifts |
-| `test_container_usage_average_equals_maximum` | The two usage files hold the same value for every container and time | fixture | The shared volume moves between containers across files |
 | `test_container_request_and_limit_series_in_bytes` | Request and limit series equal the pod spec in bytes | snapshot | Wrong value or unit |
 | `test_container_attributes_in_mib` | `EphemeralStorageRequest` and `EphemeralStorageLimit` in `container/attributes.csv` equal the spec in whole MiB | snapshot | Attributes use bytes or round wrongly |
-
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/ephemeral-storage -v --tb=short
-.venv/bin/python -m pytest scenarios/ephemeral-storage --replay <artifact-dir> -q --tb=short
-```
-
-The module's `files` map is the same as node-pressure's plus the seven ephemeral files. The node group
-files are listed only so the map is exact.
 
 ## Extend
 
@@ -147,6 +129,4 @@ files are listed only so the map is exact.
   `eph-requests` / `eph-limits` readiness counts.
 - **New node.** Add it to `NODE_STORAGE`, which is keyed by the Kind node name.
 - **New ephemeral file.** Add its path to `EPHEMERAL_FILES` and write a value test.
-- Coverage inventory entries reference this module through the `_EPH` prefix in
-  [`harness/coverage.py`](../../harness/coverage.py).
 - Follow [extending.md](../extending.md) for the general steps.
