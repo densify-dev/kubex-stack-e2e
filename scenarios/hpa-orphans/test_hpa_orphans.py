@@ -1,7 +1,7 @@
 """HorizontalPodAutoscalers the collector can attach to a workload, and ones it cannot.
 
-Two HPAs scale Deployments that run containers; two scale Deployments that never exist. The first
-pair is attached to their target's container rows (container/hpa_*.csv and the Hpa columns of
+Three HPAs scale Deployments that run containers (one of them with a single metric); two scale
+Deployments that never exist. The first three are attached to their target's container rows (container/hpa_*.csv and the Hpa columns of
 container/attributes.csv), the second pair can only be reported on their own (hpa/hpa_extra_*.csv).
 Every value is a spec value or a Kubernetes replica count, so it is exact.
 
@@ -47,10 +47,11 @@ MIB = 2**20
 HPAS = {
     "hpa-a": ("web-a", 2, 4, {("cpu", "utilization"): 50, ("memory", "average"): 64 * MIB}, {"stack-e2e.kubex.ai/hpa": "a"}),
     "hpa-b": ("web-b", 2, 5, {("cpu", "average"): 0.1, ("memory", "utilization"): 60}, {"stack-e2e.kubex.ai/hpa": "b"}),
+    "hpa-c": ("web-c", 2, 3, {("cpu", "utilization"): 40}, {"stack-e2e.kubex.ai/hpa": "c"}),
     "ghost-a": ("ghost", 1, 3, {("cpu", "utilization"): 70, ("memory", "average"): 128 * MIB}, {"stack-e2e.kubex.ai/hpa": "ghost-a"}),
     "ghost-b": ("phantom", 3, 6, {("cpu", "average"): 0.2, ("memory", "utilization"): 80}, {"stack-e2e.kubex.ai/hpa": "ghost-b"}),
 }
-CLASSIFIED, ORPHANS = ("hpa-a", "hpa-b"), ("ghost-a", "ghost-b")
+CLASSIFIED, ORPHANS = ("hpa-a", "hpa-b", "hpa-c"), ("ghost-a", "ghost-b")
 KEYS = ["ClusterName", "Namespace", "EntityName", "EntityType", "ContainerName", "HpaName"]
 
 # stem: (column, target metric (name, type) or None)
@@ -105,16 +106,16 @@ SCENARIO = ScenarioSpec(
         },
     ),
     resources=["workload.yaml"],
-    lifecycle=[Wait("deployment", "web-a", NAMESPACE), Wait("deployment", "web-b", NAMESPACE)],
+    lifecycle=[Wait("deployment", name, NAMESPACE) for name in ("web-a", "web-b", "web-c")],
     prometheus=PrometheusSpec(
         queries=[
-            PrometheusQuery("hpa-info", f'kube_horizontalpodautoscaler_info{{namespace="{NAMESPACE}"}}', min_results=4),
-            PrometheusQuery("hpa-spec-targets", f'kube_horizontalpodautoscaler_spec_target_metric{{namespace="{NAMESPACE}"}}', min_results=8),
+            PrometheusQuery("hpa-info", f'kube_horizontalpodautoscaler_info{{namespace="{NAMESPACE}"}}', min_results=5),
+            PrometheusQuery("hpa-spec-targets", f'kube_horizontalpodautoscaler_spec_target_metric{{namespace="{NAMESPACE}"}}', min_results=9),
             # the controller has synced: classified HPAs report their 2 replicas and that no resource metrics are available
-            PrometheusQuery("hpa-current-replicas", f'kube_horizontalpodautoscaler_status_current_replicas{{namespace="{NAMESPACE}"}} == 2', min_results=2),
-            PrometheusQuery("hpa-no-metrics", f'kube_horizontalpodautoscaler_status_condition{{namespace="{NAMESPACE}",condition="ScalingActive",status="false"}} == 1', min_results=2),
-            PrometheusQuery("hpa-status-all", f'kube_horizontalpodautoscaler_status_current_replicas{{namespace="{NAMESPACE}"}}', min_results=4),
-            PrometheusQuery("web-running", f'kube_pod_status_phase{{namespace="{NAMESPACE}",phase="Running"}} == 1', min_results=4),
+            PrometheusQuery("hpa-current-replicas", f'kube_horizontalpodautoscaler_status_current_replicas{{namespace="{NAMESPACE}"}} == 2', min_results=3),
+            PrometheusQuery("hpa-no-metrics", f'kube_horizontalpodautoscaler_status_condition{{namespace="{NAMESPACE}",condition="ScalingActive",status="false"}} == 1', min_results=3),
+            PrometheusQuery("hpa-status-all", f'kube_horizontalpodautoscaler_status_current_replicas{{namespace="{NAMESPACE}"}}', min_results=5),
+            PrometheusQuery("web-running", f'kube_pod_status_phase{{namespace="{NAMESPACE}",phase="Running"}} == 1', min_results=6),
         ],
     ),
     forwarder=ForwarderSpec(
@@ -220,9 +221,9 @@ def test_hpa_attributes_on_target_containers(archive):
         row = attributes.one(Namespace=NAMESPACE, EntityName=target, ContainerName="app")
         assert row["HpaName"] == name
         assert prometheus_labels(labels).items() <= label_map(row["HpaLabels"]).items(), name
-        assert set(row["HpaTargetMetricName"].split("###")) == {"cpu", "memory"}, name
-        # two target metrics reset the single-metric type and value (container/collection.go:565-569)
-        assert (row["HpaTargetMetricType"], row["HpaTargetMetricValue"]) == ("", ""), name
+        assert set(row["HpaTargetMetricName"].split("###")) == {metric for metric, _ in HPAS[name][3]}, name
+        if len(HPAS[name][3]) > 1:  # two target metrics reset the single-metric type and value (container/collection.go:565-569)
+            assert (row["HpaTargetMetricType"], row["HpaTargetMetricValue"]) == ("", ""), name
         assert set(row["HpaTargetMetrics"].split("###")) == _target_metrics(name), name
     targets = {(NAMESPACE, HPAS[name][0]) for name in CLASSIFIED}
     columns = ["HpaName", "HpaLabels", "HpaTargetMetricName", "HpaTargetMetricType", "HpaTargetMetricValue", "HpaTargetMetrics"]
@@ -230,6 +231,14 @@ def test_hpa_attributes_on_target_containers(archive):
     assert others
     for row in others:
         assert not any(row[c] for c in columns), f"{row['Namespace']}/{row['EntityName']} has HPA columns"
+
+
+def test_single_metric_hpa_keeps_its_target_type_and_value(archive):
+    """One target metric: the collector prints its type and value (%f) rather than resetting them."""
+
+    ((metric, kind), value), = HPAS["hpa-c"][3].items()
+    row = archive.csv("container/attributes.csv").one(Namespace=NAMESPACE, EntityName=HPAS["hpa-c"][0], ContainerName="app")
+    assert (row["HpaTargetMetricName"], row["HpaTargetMetricType"], row["HpaTargetMetricValue"]) == (metric, kind, f"{value:.6f}")
 
 
 def test_orphan_config(archive):

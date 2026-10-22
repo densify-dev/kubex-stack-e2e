@@ -64,8 +64,12 @@ _CONTAINER_ATTRIBUTES = {
         _t(_CR + "test_attribute_identity_columns"),
     ),
     **dict.fromkeys(
-        ("HpaLabels", "HpaTargetMetricName", "HpaTargetMetricType", "HpaTargetMetricValue", "HpaTargetMetrics"),
+        ("HpaLabels", "HpaTargetMetricName", "HpaTargetMetrics"),
         _t(_HPA + "test_hpa_attributes_on_target_containers"),
+    ),
+    **dict.fromkeys(
+        ("HpaTargetMetricType", "HpaTargetMetricValue"),
+        _t(_HPA + "test_hpa_attributes_on_target_containers", _HPA + "test_single_metric_hpa_keeps_its_target_type_and_value"),
     ),
     **dict.fromkeys(
         ("GpuLimit", "GpuRequest", "GpuLimitFloat", "GpuRequestFloat", "GpuModel", "GpuSharingStrategy"),

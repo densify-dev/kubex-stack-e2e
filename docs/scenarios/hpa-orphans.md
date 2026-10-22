@@ -11,8 +11,9 @@ Code: [`test_hpa_orphans.py`](../../scenarios/hpa-orphans/test_hpa_orphans.py), 
   columns on those container rows. Other containers have no HPA columns.
 - An HPA whose target never exists ("orphan") gets `hpa/hpa_extra_config.csv`, `hpa_extra_attributes.csv`
   and `hpa_extra_*.csv` series, with empty entity columns and its target metrics intact.
-- The four HPAs use all four metric target types (CPU and memory, utilization and average value), so
-  each target file holds exactly the HPAs that declare that target.
+- The HPAs use all four metric target types (CPU and memory, utilization and average value), so each
+  target file holds exactly the HPAs that declare that target. One HPA has a single metric, so the
+  collector keeps that metric's type and value.
 - With `history=2` the collector runs one range query per interval. Every identity has the samples both
   intervals imply, including the shared boundary.
 - No metrics-server is installed, so current CPU and memory and the `ScalingLimited` condition have no
@@ -23,11 +24,11 @@ Code: [`test_hpa_orphans.py`](../../scenarios/hpa-orphans/test_hpa_orphans.py), 
 | Item | Value |
 | --- | --- |
 | Cluster | 1 control plane (`stack-e2e-system=system`, runs the stack) + 1 worker in node group `hpa-workers` (`topology.kubex.ai/node-group`). No metrics-server. |
-| Workloads | `hpa-orphans-workload`: Deployments `web-a` and `web-b` (2 replicas, container `app`). HPAs `hpa-a` (targets `web-a`, 2 to 4) and `hpa-b` (targets `web-b`, 2 to 5). Orphans `ghost-a` (targets Deployment `ghost`, 1 to 3) and `ghost-b` (targets `phantom`, 3 to 6). `HPAS` in the module mirrors every spec value. |
+| Workloads | `hpa-orphans-workload`: Deployments `web-a`, `web-b` and `web-c` (2 replicas, container `app`). HPAs `hpa-a` (targets `web-a`, 2 to 4), `hpa-b` (targets `web-b`, 2 to 5) and `hpa-c` (targets `web-c`, 2 to 3, CPU utilization 40 % only). Orphans `ghost-a` (targets Deployment `ghost`, 1 to 3) and `ghost-b` (targets `phantom`, 3 to 6). `HPAS` in the module mirrors every spec value. |
 | Fixtures | none |
 | Collector settings | `Collection(interval="minutes", interval_size=1, history=2, sample_rate=1)`, `node_group_list=label_topology_kubex_ai_node_group`. Node exporter, GPU process exporter, Beyla, node labeler and the ephemeral-storage exporter are disabled. Real cAdvisor stays on. |
 | Window | 240 s (`history=2` reads from two minutes before the audit time) |
-| Readiness gates | `hpa-info` (4), `hpa-spec-targets` (8), `hpa-current-replicas` (2), `hpa-no-metrics` (2), `hpa-status-all` (4), `web-running` (4). Lifecycle waits for `web-a` and `web-b`. |
+| Readiness gates | `hpa-info` (5), `hpa-spec-targets` (9), `hpa-current-replicas` (3), `hpa-no-metrics` (3), `hpa-status-all` (5), `web-running` (6). Lifecycle waits for `web-a`, `web-b` and `web-c`. |
 | Snapshots | nodes and pods only |
 
 ```mermaid
@@ -38,9 +39,11 @@ flowchart LR
   subgraph W1["worker (hpa-workers)"]
     A["web-a x2 (app)"]
     B["web-b x2 (app)"]
+    C["web-c x2 (app)"]
   end
-  H1["hpa-a, hpa-b"] -. "scale" .-> A
+  H1["hpa-a, hpa-b, hpa-c"] -. "scale" .-> A
   H1 -.-> B
+  H1 -.-> C
   H2["ghost-a, ghost-b (no target)"] --> S
   H1 --> S
   W1 --> S
@@ -79,14 +82,17 @@ current CPU and memory and `ScalingLimited` are not written.
 ### HPA columns: container/attributes.csv and hpa/hpa_extra_attributes.csv
 
 The same spec series, joined with `kube_horizontalpodautoscaler_labels`, fill the `Hpa*` attribute
-columns. Two target metrics mean the single-metric type and value stay empty, and `HpaTargetMetrics`
-holds every `<metric>|<type>|<value>` entry, joined with `###`.
+columns. Two target metrics mean the single-metric type and value stay empty, one metric keeps them, and
+`HpaTargetMetrics` holds every `<metric>|<type>|<value>` entry, joined with `###`.
 
 ```csv
 EntityName,ContainerName,HpaName,HpaTargetMetricName,HpaTargetMetricType,HpaTargetMetrics
 web-a,app,hpa-a,cpu###memory,,cpu|utilization|50.000###memory|average|67108864.000
+web-c,app,hpa-c,cpu,utilization,cpu|utilization|40.000
 ,,ghost-a,cpu###memory,,cpu|utilization|70.000###memory|average|134217728.000
 ```
+
+For `hpa-c`, `HpaTargetMetricValue` is `40.000000` (`%f`).
 
 `HpaLabels` carries the HPA's Kubernetes labels (`label_stack_e2e_kubex_ai_hpa : a`) among the
 kube-state-metrics labels. Containers that no HPA targets have all `Hpa*` columns empty.
@@ -117,9 +123,13 @@ Each test runs once per file. The 14 files are `HPA_SERIES` for the classified H
 
 | Test | Asserts | Truth | A failure means |
 | --- | --- | --- | --- |
-| `test_hpa_attributes_on_target_containers` | `web-a/app` and `web-b/app` carry their `HpaName`, `HpaLabels`, `HpaTargetMetricName` and `HpaTargetMetrics`. The single-metric type and value are empty because there are two metrics. All other containers have no HPA columns. | `HPAS` | HPA not attached to its target, or attached to another container |
+| `test_hpa_attributes_on_target_containers` | `web-a/app`, `web-b/app` and `web-c/app` carry their `HpaName`, `HpaLabels`, `HpaTargetMetricName` and `HpaTargetMetrics`. The single-metric type and value are empty for the two-metric HPAs. All other containers have no HPA columns. | `HPAS` | HPA not attached to its target, or attached to another container |
+| `test_single_metric_hpa_keeps_its_target_type_and_value` | `hpa-c`'s container has `HpaTargetMetricType` `utilization` and `HpaTargetMetricValue` `40.000000` | `HPAS` | The type and value of a single-metric HPA are blanked |
 | `test_orphan_config` | `hpa_extra_config.csv` has exactly one row per orphan, with empty entity columns, OS `Linux` and manufacturer `HPA` | `HPAS`, grid | Orphan missing, duplicated or described as a container |
 | `test_orphan_attributes_describe_their_targets` | Each orphan's labels and target metrics match its spec, with empty entity columns and the single-metric type and value | `HPAS` | Orphan metadata lost or invented |
+
+The current-metric and `ScalingLimited` files are deliberately not in the module's `files`, so
+`test_expected_files` fails if the collector writes them.
 
 ## Not covered
 
@@ -128,24 +138,10 @@ Each test runs once per file. The 14 files are `HPA_SERIES` for the classified H
 - Orphan target metrics (`HpaTargetMetricName`, `HpaTargetMetrics`) are asserted from
   `hpa/hpa_extra_attributes.csv`. If that file is missing from the upload, the values are never compared.
 
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/hpa-orphans -v --tb=short
-.venv/bin/python -m pytest scenarios/hpa-orphans --replay <artifact-dir> -q --tb=short
-```
-
-`files` is the node-pressure set (`BASE_FILES`) plus the 16 `HPA_FILES`. The current-metric and
-`ScalingLimited` files are deliberately not listed, so `test_expected_files` fails if the collector
-writes them.
-
 ## Extend
 
 - **New HPA.** Add it to `workload.yaml` and to `HPAS`, and to `CLASSIFIED` or `ORPHANS`. Update the
   `hpa-info`, `hpa-spec-targets`, `hpa-current-replicas` and `hpa-status-all` readiness counts.
 - **New target type.** Add the stem to `HPA_SERIES`. `SERIES_FILES` and `HPA_FILES` follow, and the
   `HPA_FILES` length assert needs updating.
-- Coverage inventory entries reference this module through the `_HPA` prefix in
-  [`harness/coverage.py`](../../harness/coverage.py). The HPA files that need metrics-server are
-  excluded there, with the reason.
 - Follow [extending.md](../extending.md) for the general steps.

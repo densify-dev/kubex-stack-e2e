@@ -3,7 +3,7 @@ kind: Namespace
 metadata:
   name: hpa-orphans-workload
 ---
-# Two scale targets with one idle container each. 2 replicas is inside [min, max] of their HPAs,
+# Three scale targets with one idle container each. 2 replicas is inside [min, max] of their HPAs,
 # and without a metrics API the HPA controller never rescales them.
 apiVersion: apps/v1
 kind: Deployment
@@ -25,6 +25,18 @@ spec:
   selector: {matchLabels: {app: web-b}}
   template:
     metadata: {labels: {app: web-b}}
+    spec:
+      containers:
+        - {name: app, image: registry.k8s.io/pause:3.9, imagePullPolicy: IfNotPresent}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: web-c, namespace: hpa-orphans-workload}
+spec:
+  replicas: 2
+  selector: {matchLabels: {app: web-c}}
+  template:
+    metadata: {labels: {app: web-c}}
     spec:
       containers:
         - {name: app, image: registry.k8s.io/pause:3.9, imagePullPolicy: IfNotPresent}
@@ -62,6 +74,21 @@ spec:
       resource: {name: cpu, target: {type: AverageValue, averageValue: 100m}}
     - type: Resource
       resource: {name: memory, target: {type: Utilization, averageUtilization: 60}}
+---
+# hpa-c: a single metric, so the collector keeps its type and value in the attributes
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: hpa-c
+  namespace: hpa-orphans-workload
+  labels: {stack-e2e.kubex.ai/hpa: c}
+spec:
+  scaleTargetRef: {apiVersion: apps/v1, kind: Deployment, name: web-c}
+  minReplicas: 2
+  maxReplicas: 3
+  metrics:
+    - type: Resource
+      resource: {name: cpu, target: {type: Utilization, averageUtilization: 40}}
 ---
 # ghost-a and ghost-b: their Deployments never exist, so the collector cannot classify them
 apiVersion: autoscaling/v2
