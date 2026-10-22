@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - anant/stack-e2e-harness
+      - main
   workflow_dispatch:
     inputs:
       scenario:
