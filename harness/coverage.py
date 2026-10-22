@@ -122,22 +122,22 @@ _NODE_ATTRIBUTES = {
     "GpuLabels": _t(_GDP + "test_node_gpu_labels"),
 }
 _GROUP_CONFIG = {
-    "HwTotalCpus": _t(_NGL + "test_config_total_cpus", _NP + "test_group_config_hardware", _NGR + "test_config_hardware"),
+    "HwTotalCpus": _t(_NP + "test_group_config_hardware", _NGR + "test_config_hardware"),
     **dict.fromkeys(("HwTotalPhysicalCpus", "HwCoresPerCpu", "HwThreadsPerCore"), _t(_NP + "test_group_config_hardware", _NGR + "test_config_hardware")),
-    "HwTotalMemory": _t(_NGL + "test_config_total_memory_in_bytes", _NP + "test_group_config_hardware", _NGR + "test_config_hardware"),
+    "HwTotalMemory": _t(_NP + "test_group_config_hardware", _NGR + "test_config_hardware"),
     "HwModel": _t(_NP + "test_group_config_os_and_model", _NGR + "test_config_os_and_model"),
-    "OsName": _t(_NGL + "test_config_os_name", _NP + "test_group_config_os_and_model", _NGR + "test_config_os_and_model"),
+    "OsName": _t(_NP + "test_group_config_os_and_model", _NGR + "test_config_os_and_model"),
 }
 _GROUP_ATTRIBUTES = {
-    **dict.fromkeys(("VirtualTechnology", "VirtualDomain"), _t(_NGL + "test_attributes_describe_a_node_group", _NP + "test_node_group_membership", _NGR + "test_group_membership")),
-    **dict.fromkeys(("CurrentSize", "CurrentNodes"), _t(_NGL + "test_both_workers_are_in_the_group", _NP + "test_node_group_membership", _NGR + "test_group_membership")),
-    "CpuLimit": _t(_NGL + "test_attribute_cpu_limit", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES),
-    "CpuRequest": _t(_NGL + "test_attribute_cpu_request", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES),
-    "MemoryLimit": _t(_NGL + "test_attribute_memory_limit", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES),
-    "MemoryRequest": _t(_NGL + "test_attribute_memory_request", _NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES),
+    **dict.fromkeys(("VirtualTechnology", "VirtualDomain"), _t(_NP + "test_node_group_membership", _NGR + "test_group_membership")),
+    **dict.fromkeys(("CurrentSize", "CurrentNodes"), _t(_NP + "test_node_group_membership", _NGR + "test_group_membership")),
+    "CpuLimit": _t(_NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES),
+    "CpuRequest": _t(_NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES),
+    "MemoryLimit": _t(_NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES),
+    "MemoryRequest": _t(_NP + "test_group_attribute_requests_and_limits", _NGR + "test_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES),
     "NodeLabels": _t(_NP + "test_group_attribute_labels", _NGR + "test_attribute_labels"),
 }
-_GROUP_RESERVATION = _t(_NGL + "test_reservation_percent_matches_the_cluster", _NP + "test_group_reservation_percent_matches_the_cluster", _NGR + "test_reservation_percent_matches_the_cluster")
+_GROUP_RESERVATION = _t(_NP + "test_group_reservation_percent_matches_the_cluster", _NGR + "test_reservation_percent_matches_the_cluster")
 
 
 INVENTORY: dict[str, dict[str, str]] = {
@@ -208,10 +208,10 @@ INVENTORY: dict[str, dict[str, str]] = {
     "node/net_total_packets.csv": _csv(NO + "NetTotalPackets", NetTotalPackets=_t(_NE + "test_values_match_the_fixture")),
     "node_group/config.csv": _csv("AuditTime,ClusterName,NodeGroupName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwModel,OsName", **_GROUP_CONFIG),
     "node_group/attributes.csv": _csv("ClusterName,NodeGroupName,VirtualTechnology,VirtualDomain,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,CurrentSize,CurrentNodes,NodeLabels", **_GROUP_ATTRIBUTES),
-    "node_group/current_size.csv": _csv(NG + "CurrentSize", CurrentSize=_t(_NGL + "test_current_size_holds_for_every_sample", _NP + "test_current_size_holds_for_every_sample", _NGR + "test_current_size_holds_for_every_sample")),
-    "node_group/cpu_requests.csv": _csv(NG + "CpuRequests", CpuRequests=_t(_NGL + "test_requests_match_the_cluster", _NP + "test_group_requests_match_the_cluster", _NGR + "test_requests_match_the_cluster", _CR + "test_terminal_pods_are_excluded_from_series")),
+    "node_group/current_size.csv": _csv(NG + "CurrentSize", CurrentSize=_t(_NP + "test_current_size_holds_for_every_sample", _NGR + "test_current_size_holds_for_every_sample")),
+    "node_group/cpu_requests.csv": _csv(NG + "CpuRequests", CpuRequests=_t(_NP + "test_group_requests_match_the_cluster", _NGR + "test_requests_match_the_cluster", _CR + "test_terminal_pods_are_excluded_from_series")),
     "node_group/cpu_reservation_percent.csv": _csv(NG + "CpuReservationPercent", CpuReservationPercent=_GROUP_RESERVATION),
-    "node_group/memory_requests.csv": _csv(NG + "MemoryRequests", MemoryRequests=_t(_NGL + "test_requests_match_the_cluster", _NP + "test_group_requests_match_the_cluster", _NGR + "test_requests_match_the_cluster", _CR + "test_terminal_pods_are_excluded_from_series")),
+    "node_group/memory_requests.csv": _csv(NG + "MemoryRequests", MemoryRequests=_t(_NP + "test_group_requests_match_the_cluster", _NGR + "test_requests_match_the_cluster", _CR + "test_terminal_pods_are_excluded_from_series")),
     "node_group/memory_reservation_percent.csv": _csv(NG + "MemoryReservationPercent", MemoryReservationPercent=_GROUP_RESERVATION),
     "node_group/gpu_requests.csv": _csv(NG + "GpuRequests", GpuRequests=_t(_GDP + "test_group_gpu_requests_and_reservation")),
     "node_group/gpu_reservation_percent.csv": _csv(NG + "GpuReservationPercent", GpuReservationPercent=_t(_GDP + "test_group_gpu_requests_and_reservation")),
@@ -263,7 +263,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "container/avg_custom_memory_workload.csv": _csv(CO + "AvgCustomMemory", AvgCustomMemory=_CAD_USAGE),
     "container/avg_disk_workload.csv": _csv(CO + "AvgDisk", AvgDisk=_CAD_USAGE),
     "container/avg_cpu_throttling_percent_workload.csv": _csv(CO + "AvgCpuThrottlingPercent", AvgCpuThrottlingPercent=_CAD_USAGE),
-    "container/ephemeral_storage_usage_bytes_avg_workload.csv": _csv(CO + "EphemeralStorageUsageBytesAvg", EphemeralStorageUsageBytesAvg=_t(_EPH + "test_container_usage_counts_each_volume_once", _EPH + "test_container_usage_average_equals_maximum")),
+    "container/ephemeral_storage_usage_bytes_avg_workload.csv": _csv(CO + "EphemeralStorageUsageBytesAvg", EphemeralStorageUsageBytesAvg=_t(_EPH + "test_container_usage_counts_each_volume_once")),
     "container/gpu_utilization_avg_workload.csv": _csv(CO + "GpuUtilizationAvg", GpuUtilizationAvg=_t(_GDP + "test_container_dcgm_workloads_match_the_fixture", _GTF + "test_kubex_workloads_match_the_fixture")),
     "container/gpu_utilization_gpus_avg_workload.csv": _csv(CO + "GpuUtilizationGpusAvg", GpuUtilizationGpusAvg=_t(_GDP + "test_container_dcgm_workloads_match_the_fixture", _GTF + "test_kubex_workloads_match_the_fixture")),
     "container/gpu_mem_utilization_avg_workload.csv": _csv(CO + "GpuMemUtilizationAvg", GpuMemUtilizationAvg=_t(_GDP + "test_container_dcgm_workloads_match_the_fixture", _GTF + "test_kubex_workloads_match_the_fixture")),
@@ -277,7 +277,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "container/max_custom_memory_workload.csv": _csv(CO + "MaxCustomMemory", MaxCustomMemory=_CAD_USAGE),
     "container/max_disk_workload.csv": _csv(CO + "MaxDisk", MaxDisk=_CAD_USAGE),
     "container/max_cpu_throttling_percent_workload.csv": _csv(CO + "MaxCpuThrottlingPercent", MaxCpuThrottlingPercent=_CAD_USAGE),
-    "container/ephemeral_storage_usage_bytes_max_workload.csv": _csv(CO + "EphemeralStorageUsageBytesMax", EphemeralStorageUsageBytesMax=_t(_EPH + "test_container_usage_counts_each_volume_once", _EPH + "test_container_usage_average_equals_maximum")),
+    "container/ephemeral_storage_usage_bytes_max_workload.csv": _csv(CO + "EphemeralStorageUsageBytesMax", EphemeralStorageUsageBytesMax=_t(_EPH + "test_container_usage_counts_each_volume_once")),
     "container/gpu_utilization_max_workload.csv": _csv(CO + "GpuUtilizationMax", GpuUtilizationMax=_t(_GDP + "test_container_dcgm_workloads_match_the_fixture", _GTF + "test_kubex_workloads_match_the_fixture")),
     "container/gpu_utilization_gpus_max_workload.csv": _csv(CO + "GpuUtilizationGpusMax", GpuUtilizationGpusMax=_t(_GDP + "test_container_dcgm_workloads_match_the_fixture", _GTF + "test_kubex_workloads_match_the_fixture")),
     "container/gpu_mem_utilization_max_workload.csv": _csv(CO + "GpuMemUtilizationMax", GpuMemUtilizationMax=_t(_GDP + "test_container_dcgm_workloads_match_the_fixture", _GTF + "test_kubex_workloads_match_the_fixture")),

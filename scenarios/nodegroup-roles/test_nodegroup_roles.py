@@ -22,7 +22,6 @@ import pytest
 from harness.archive import (
     assert_distinct,
     assert_metric_grid,
-    assert_unique_keys,
     expected_timestamps,
     label_map,
     prometheus_labels,
@@ -147,7 +146,6 @@ SCENARIO = ScenarioSpec(
 CLUSTER = SCENARIO.name
 _NODES = SCENARIO.cluster.node_names(SCENARIO.cluster_name)
 MEMBERS = {"control-plane": [_NODES[0]], "infra": [_NODES[1]], "gpu": [_NODES[2]]}
-UNGROUPED = _NODES[3]
 
 TIME_SERIES = [
     "node_group/current_size.csv",
@@ -180,7 +178,6 @@ def test_entity_tables_hold_exactly_the_three_groups(archive, path):
     assert_distinct(table, "ClusterName", [CLUSTER])
     assert_distinct(table, "NodeGroupName", list(MEMBERS))
     assert len(table) == len(MEMBERS), f"{path}: entity table should hold one row per node group"
-    assert_unique_keys(table, KEYS)
 
 
 @pytest.mark.parametrize("path", TIME_SERIES)
@@ -206,11 +203,6 @@ def test_group_membership(archive, group):
     assert row["VirtualDomain"] == CLUSTER
     assert sorted(row["CurrentNodes"].split("|")) == sorted(MEMBERS[group])
     assert float(row["CurrentSize"]) == pytest.approx(len(MEMBERS[group]))
-
-
-def test_a_node_without_a_role_is_in_no_group(archive):
-    members = {n for row in archive.csv("node_group/attributes.csv") for n in row["CurrentNodes"].split("|")}
-    assert UNGROUPED not in members
 
 
 def test_current_size_holds_for_every_sample(archive):

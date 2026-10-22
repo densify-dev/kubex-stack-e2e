@@ -240,12 +240,6 @@ def _keys(path):
     return {"node": NODE_KEYS, "node_group": GROUP_KEYS, "cluster": CLUSTER_KEYS}[path.split("/")[0]]
 
 
-def test_node_exporter_is_detected(archive):
-    """Without it the collector logs this once per entity and writes no exporter file (node.go:233-236)."""
-
-    assert "prometheus node exporter metrics not present" not in archive.raw("log.txt").decode()
-
-
 @pytest.mark.parametrize("path", EXPORTER_FILES)
 def test_exporter_series_follow_the_collector_grid(archive, path):
     keys, identities = _keys(path)

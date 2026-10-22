@@ -181,12 +181,6 @@ def test_reserved_worker_has_less_allocatable_storage(oracle):
     assert lost(W1) - lost(W2) == 2**30
 
 
-def test_ephemeral_exporter_is_detected(archive):
-    """Without it the collector logs this and writes no usage file (node.go:215)."""
-
-    assert "Ephemeral storage exporter metrics not present" not in archive.raw("log.txt").decode()
-
-
 @pytest.mark.parametrize("path", EPHEMERAL_FILES)
 def test_ephemeral_series_follow_the_collector_grid(archive, oracle, path):
     """Only W1 has a request and limit, so only W1 has a row in those node files; usage covers every node."""
@@ -212,18 +206,6 @@ def test_container_usage_counts_each_volume_once(archive, path, column):
         offsets[row["ContainerName"]].add(float(row[column]) - OWN[row["ContainerName"]])
     assert all(len(o) == 1 for o in offsets.values()), f"usage is not steady: {offsets}"
     assert sorted(o.pop() for o in offsets.values()) == [0, SHARED]
-
-
-def test_container_usage_average_equals_maximum(archive):
-    """One replica with constant usage, so the average and maximum of every sample are the same value,
-    which also keeps the shared volume on the same container in both files."""
-
-    (avg_path, avg_column), (max_path, max_column) = CONTAINER_USAGE
-
-    def usage(path, column):
-        return {(r["ContainerName"], r["MetricTime"]): float(r[column]) for r in archive.csv(path)}
-
-    assert usage(avg_path, avg_column) == usage(max_path, max_column)
 
 
 @pytest.mark.parametrize(

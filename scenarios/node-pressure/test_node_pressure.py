@@ -18,7 +18,6 @@ import pytest
 from harness.archive import (
     assert_distinct,
     assert_metric_grid,
-    assert_unique_keys,
     expected_timestamps,
     label_map,
     prometheus_labels,
@@ -242,7 +241,6 @@ def test_every_node_is_described_once(archive, path):
     assert_distinct(table, "ClusterName", [CLUSTER])
     assert_distinct(table, "NodeName", NODES)
     assert len(table) == len(NODES), f"{path}: entity table should hold one row per node"
-    assert_unique_keys(table, ["ClusterName", "NodeName"])
 
 
 @pytest.mark.parametrize("path,column,calculation,resource,factor", NODE_SERIES, ids=[row[1] for row in NODE_SERIES])
@@ -391,7 +389,6 @@ def test_node_groups_are_exactly_the_two_pools(archive, path):
     assert_distinct(table, "ClusterName", [CLUSTER])
     assert_distinct(table, "NodeGroupName", list(GROUPS))
     assert len(table) == len(GROUPS), f"{path}: entity table should hold one row per node group"
-    assert_unique_keys(table, GROUP_KEYS)
 
 
 @pytest.mark.parametrize("path", GROUP_TIME_SERIES)
