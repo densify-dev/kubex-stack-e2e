@@ -215,6 +215,8 @@ def install(
     manifest = artifacts / "kubex-stack-rendered.yaml"
     write(manifest, inject(rendered, UPLOAD_HOST, receiver_cluster_ip))
     kubectl(["apply", "-f", str(manifest)], repo_root)
+    # Only the Job the harness creates may upload, even if the run straddles the CronJob's schedule.
+    kubectl(["patch", "cronjob", cronjob, "-n", stack.namespace, "-p", '{"spec":{"suspend":true}}'], repo_root)
     return cronjob
 
 

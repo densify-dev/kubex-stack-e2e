@@ -425,9 +425,10 @@ class StackInstallTest(unittest.TestCase):
         versions: dict = {}
         with tempfile.TemporaryDirectory() as directory, patch.object(
             stack_mod, "run", fake_run
-        ), patch.object(stack_mod, "kubectl"):
+        ), patch.object(stack_mod, "kubectl") as kubectl:
             root = Path(directory)
             cronjob = stack_mod.install(scenario, root, root, "10.0.0.1", versions, **kwargs)
+        self.kubectl_calls = [call.args[0] for call in kubectl.call_args_list]
         return calls, versions, cronjob
 
     def _scenario(self, **stack: object) -> ScenarioSpec:
@@ -443,6 +444,13 @@ class StackInstallTest(unittest.TestCase):
             self.assertEqual(args[args.index("--version") + 1], "1.1.24")
         self.assertEqual(versions["chart_version"], "1.1.24")
         self.assertEqual(cronjob, "kubex-stack")
+
+    def test_the_cronjob_is_suspended_after_it_is_applied(self) -> None:
+        self._install(self._scenario())
+        self.assertEqual(self.kubectl_calls[0][:2], ["apply", "-f"])
+        self.assertEqual(
+            self.kubectl_calls[1], ["patch", "cronjob", "kubex-stack", "-n", "kubex", "-p", '{"spec":{"suspend":true}}']
+        )
 
     def test_helm_overrides_cannot_replace_the_preloaded_collector(self) -> None:
         overrides = {
