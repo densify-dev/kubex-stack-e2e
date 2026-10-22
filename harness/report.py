@@ -145,7 +145,8 @@ def main(argv: Sequence[str]) -> int:
     doc_url = f"{repo}/blob/{os.environ.get('GITHUB_SHA', '')}/docs/scenarios"
     with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8") as summary:
         summary.write(markdown(scenarios, doc_url))
-    print("\n".join(annotations(scenarios)))
+    # The run page lists a job's annotations newest first, so print them last to first.
+    print("\n".join(reversed(annotations(scenarios))))
     return int(any(s.status != "passed" for s in scenarios))
 
 
