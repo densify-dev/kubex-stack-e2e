@@ -31,7 +31,6 @@ VERSION_FIELDS = (
     "chart_version",
     "collector_image_requested",
     "collector_image_digest",
-    "collector_image_id",
     "collector_version",
 )
 
@@ -175,7 +174,6 @@ def execute(
 
         snapshots = _await_window(scenario, repo_root)
         job_name = stack.trigger_forwarder(scenario, repo_root, cronjob)
-        versions["collector_image_id"] = stack.job_image_id(job_name, scenario.stack.namespace, repo_root)
         job_failures = stack.job_failures(job_name, scenario.stack.namespace, repo_root)
         state = receiver.capture_state(repo_root, artifacts)
         snapshots.append(_snapshot(scenario, "after upload", repo_root))
@@ -188,7 +186,6 @@ def execute(
         found = re.search(r"collection version (\S+)", log.split("\n", 1)[0])
         versions["collector_version"] = found.group(1) if found else "unknown"
         oracle = Oracle(snapshots=snapshots)
-        write_json(artifacts / "archive-paths.json", archive.paths)
 
         run = Run(
             scenario=scenario,
@@ -203,10 +200,7 @@ def execute(
         _write_replay_inputs(artifacts, run)
         yield run
 
-        # Runs after the tests, whether they passed or failed — a generator
-        # fixture is always resumed for teardown. The oracle's evidence is only
-        # complete once the tests have queried it.
-        write_json(artifacts / "kubernetes-oracles.json", oracle.evidence)
+        # Runs after the tests, whether they passed or failed: a generator fixture is always resumed for teardown.
         # "collected" describes the run, not the assertions: pytest owns pass and
         # fail, and saying "success" here would contradict a red test run.
         artifacts_mod.summary(
@@ -215,10 +209,7 @@ def execute(
             "collected",
             versions,
             captured_uploads=uploads,
-            archive_paths=len(archive.paths),
-            drift_snapshots=len(snapshots),
             job_failures=job_failures,
-            assertions="see pytest report",
             coverage_warnings=run.coverage_warnings,
         )
     except Exception as exc:

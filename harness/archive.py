@@ -14,47 +14,17 @@ from __future__ import annotations
 import csv
 import io
 import re
-import tarfile
 import zipfile
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path, PurePosixPath
-from typing import BinaryIO, Iterable, Iterator, Mapping, Sequence
+from typing import Iterable, Iterator, Mapping, Sequence
 
 from harness.spec import INTERVAL_SECONDS, Collection
 
 
 class ArchiveError(ValueError):
     """Raised when archive safety or CSV structure checks fail."""
-
-
-def _source_bytes(source: bytes | bytearray | Path | str | BinaryIO) -> bytes:
-    if isinstance(source, (bytes, bytearray)):
-        return bytes(source)
-    if isinstance(source, (Path, str)):
-        try:
-            return Path(source).read_bytes()
-        except OSError as exc:
-            raise ArchiveError(f"cannot read archive {source}: {exc}") from exc
-    try:
-        return source.read()
-    except OSError as exc:
-        raise ArchiveError(f"cannot read archive: {exc}") from exc
-
-
-def _normal_prefix(prefix: str) -> str:
-    if not isinstance(prefix, str):
-        raise ArchiveError("archive prefix: expected string")
-    raw = prefix.replace("\\", "/")
-    if "\x00" in raw or re.match(r"^[A-Za-z]:($|/)", raw) or raw.startswith("/"):
-        raise ArchiveError(f"archive prefix {prefix!r}: absolute or invalid path")
-    value = raw.strip("/")
-    if not value:
-        return ""
-    parts = value.split("/")
-    if any(part in {"", ".", ".."} for part in parts):
-        raise ArchiveError(f"archive prefix {prefix!r}: invalid path components")
-    return "/".join(parts)
 
 
 def _logical_path(member: str, prefix: str) -> str:
@@ -85,60 +55,27 @@ def _is_zip_symlink(info: zipfile.ZipInfo) -> bool:
     return (mode & 0o170000) == 0o120000
 
 
-def _archive_files(source: bytes, prefix: str) -> dict[str, tuple[bytes, bool]]:
-    """Return logical path -> (bytes, is_directory), rejecting unsafe entries."""
+def read_archive_files(source: bytes, prefix: str = "") -> dict[str, bytes]:
+    """Regular files of a ZIP archive as logical path -> bytes, after safe path and prefix validation."""
 
-    normalized_prefix = _normal_prefix(prefix)
-    result: dict[str, tuple[bytes, bool]] = {}
-    seen_logical: set[str] = set()
+    files: dict[str, bytes] = {}
+    seen: set[str] = set()
     try:
         with zipfile.ZipFile(io.BytesIO(source)) as archive:
             for info in archive.infolist():
-                logical = _logical_path(info.filename, normalized_prefix)
-                if logical in seen_logical:
+                logical = _logical_path(info.filename, prefix)
+                if logical in seen:
                     raise ArchiveError(f"duplicate logical archive path {logical!r}")
-                seen_logical.add(logical)
+                seen.add(logical)
                 if not logical:
                     continue
                 if _is_zip_symlink(info):
                     raise ArchiveError(f"archive member {info.filename!r}: symbolic links are not allowed")
-                is_directory = info.is_dir() or info.filename.replace("\\", "/").endswith("/")
-                result[logical] = (b"" if is_directory else archive.read(info), is_directory)
-            return result
-    except zipfile.BadZipFile:
-        pass
-    except (OSError, RuntimeError, zipfile.LargeZipFile) as exc:
+                if not info.is_dir():
+                    files[logical] = archive.read(info)
+    except (zipfile.BadZipFile, zipfile.LargeZipFile, OSError, RuntimeError) as exc:
         raise ArchiveError(f"cannot read ZIP archive: {exc}") from exc
-
-    try:
-        with tarfile.open(fileobj=io.BytesIO(source), mode="r:*") as archive:
-            for info in archive.getmembers():
-                logical = _logical_path(info.name, normalized_prefix)
-                if logical in seen_logical:
-                    raise ArchiveError(f"duplicate logical archive path {logical!r}")
-                seen_logical.add(logical)
-                if not logical:
-                    continue
-                is_directory = info.isdir()
-                if not (is_directory or info.isreg()):
-                    raise ArchiveError(f"archive member {info.name!r}: links and special files are not allowed")
-                extracted = None if is_directory else archive.extractfile(info)
-                if not is_directory and extracted is None:
-                    raise ArchiveError(f"archive member {info.name!r}: cannot read regular file")
-                content = b"" if extracted is None else extracted.read()
-                result[logical] = (content, is_directory)
-            return result
-    except (tarfile.TarError, OSError, EOFError) as exc:
-        raise ArchiveError(f"archive is neither valid ZIP nor TAR: {exc}") from exc
-
-
-def read_archive_files(
-    source: bytes | bytearray | Path | str | BinaryIO, archive_prefix: str = ""
-) -> dict[str, bytes]:
-    """Read regular archive files after safe path and prefix validation."""
-
-    entries = _archive_files(_source_bytes(source), archive_prefix)
-    return {path: content for path, (content, is_directory) in entries.items() if not is_directory}
+    return files
 
 
 @dataclass(frozen=True)
@@ -154,12 +91,6 @@ class Csv:
 
     def __iter__(self) -> Iterator[dict[str, str]]:
         return iter(self.rows)
-
-    def column(self, name: str) -> list[str]:
-        __tracebackhide__ = True
-        if name not in self.headers:
-            raise AssertionError(f"{self.path}: no column {name!r}; headers are {self.headers!r}")
-        return [row[name] for row in self.rows]
 
     def where(self, **selector: str) -> list[dict[str, str]]:
         """Rows whose columns all equal the given values, compared as text."""
@@ -216,18 +147,13 @@ def parse_csv(path: str, content: bytes) -> Csv:
 
 
 class Archive:
-    """The captured upload, extracted and parsed on demand."""
+    """The captured upload, parsed. Every CSV is structurally validated on construction."""
 
-    def __init__(self, files: Mapping[str, bytes], extracted_dir: Path | None = None) -> None:
+    def __init__(self, files: Mapping[str, bytes]) -> None:
         self._files = dict(files)
         # Structural CSV validity is an archive-wide contract, not something a
         # scenario opts into by mentioning a path.
-        self._csv_cache = {
-            path: parse_csv(path, content)
-            for path, content in self._files.items()
-            if path.lower().endswith(".csv")
-        }
-        self.extracted_dir = extracted_dir
+        self._csv = {path: parse_csv(path, content) for path, content in self._files.items() if path.lower().endswith(".csv")}
 
     @property
     def paths(self) -> list[str]:
@@ -243,23 +169,16 @@ class Archive:
         return self._files[path]
 
     def csv(self, path: str) -> Csv:
-        """Parse a CSV, with structural validation. Cached per path."""
-
         __tracebackhide__ = True
-        if path not in self._csv_cache:
-            self._csv_cache[path] = parse_csv(path, self.raw(path))
-        return self._csv_cache[path]
+        self.raw(path)
+        return self._csv[path]
 
 
-def load(
-    source: bytes | bytearray | Path | str | BinaryIO,
-    prefix: str = "",
-    extracted_dir: Path | None = None,
-) -> Archive:
+def load(source: bytes, prefix: str = "", extracted_dir: Path | None = None) -> Archive:
     """Validate paths, optionally extract to disk, and return the Archive."""
 
     files = read_archive_files(source, prefix)
-    archive = Archive(files, extracted_dir)
+    archive = Archive(files)
     if extracted_dir is not None:
         destination = extracted_dir.resolve()
         destination.mkdir(parents=True, exist_ok=True)
@@ -286,7 +205,7 @@ def load_directory(directory: Path) -> Archive:
             raise ArchiveError(f"extracted archive member {path}: symbolic links are not allowed")
         if path.is_file():
             files[path.relative_to(root).as_posix()] = path.read_bytes()
-    return Archive(files, root)
+    return Archive(files)
 
 
 # --- assertion helpers -------------------------------------------------------

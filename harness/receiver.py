@@ -3,10 +3,8 @@
 from __future__ import annotations
 
 import base64
-import json
 import time
 import urllib.error
-import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +12,7 @@ from harness.command import (
     HarnessError,
     create_configmap,
     ensure_namespace,
+    http_json,
     kubectl,
     port_forward,
     stop_process,
@@ -79,14 +78,6 @@ def cluster_ip(repo_root: Path) -> str:
     ).strip()
 
 
-def _http_json(url: str, timeout: float = 10) -> object:
-    try:
-        with urllib.request.urlopen(url, timeout=timeout) as response:
-            return json.loads(response.read().decode("utf-8"))
-    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
-        raise HarnessError(f"HTTP request failed for {url}: {exc}") from exc
-
-
 def capture_state(repo_root: Path, artifacts: Path, timeout: float = 300) -> dict[str, Any]:
     """Read the receiver's captured uploads, retrying a dropped port-forward."""
 
@@ -103,7 +94,7 @@ def capture_state(repo_root: Path, artifacts: Path, timeout: float = 300) -> dic
                 UPLOAD_PORT,
                 min(60, max(0.1, deadline - time.monotonic())),
             )
-            payload = _http_json(
+            payload = http_json(
                 f"http://127.0.0.1:{RECEIVER_PORT}/debug/state",
                 timeout=min(30, max(0.1, deadline - time.monotonic())),
             )

@@ -16,7 +16,6 @@ import os
 import re
 import subprocess
 import sys
-import tarfile
 import tempfile
 import threading
 import unittest
@@ -51,7 +50,6 @@ from harness.metric_fixture_server import (
     validate_fixture_document,
 )
 from harness.oracle import Oracle, OracleDrift, Snapshot
-from harness.prometheus import validate_targets
 from harness.receiver import archive_bytes, archive_upload_count, capture_state, sanitize
 from harness.spec import (
     ClusterSpec,
@@ -217,7 +215,7 @@ class CommandAndReceiverTest(unittest.TestCase):
             with (
                 patch("harness.receiver.port_forward", side_effect=[first, second]) as port_forward,
                 patch(
-                    "harness.receiver._http_json",
+                    "harness.receiver.http_json",
                     side_effect=[HarnessError("connection refused"), {"uploads": []}],
                 ) as http_json,
                 patch("harness.receiver.time.sleep"),
@@ -298,7 +296,7 @@ class CommandAndReceiverTest(unittest.TestCase):
             with (
                 patch("harness.prometheus.port_forward", side_effect=[first, second]) as port_forward,
                 patch(
-                    "harness.prometheus._http_json",
+                    "harness.prometheus.http_json",
                     side_effect=[HarnessError("forwarder closed"), {"data": {"activeTargets": []}}],
                 ),
                 patch("harness.prometheus.urllib.request.urlopen") as urlopen,
@@ -311,24 +309,6 @@ class CommandAndReceiverTest(unittest.TestCase):
 
         self.assertEqual(port_forward.call_count, 2)
         second.terminate.assert_called_once_with()
-
-    def test_prometheus_target_predicates(self) -> None:
-        from harness.spec import PrometheusTarget
-
-        targets = {
-            "data": {
-                "activeTargets": [
-                    {"health": "up", "labels": {"service": "fixture", "environment": "test"}, "discoveredLabels": {}}
-                ]
-            }
-        }
-        validate_targets(
-            targets, [PrometheusTarget(name="fixture", service="fixture", labels={"environment": "test"})]
-        )
-        with self.assertRaisesRegex(HarnessError, "not found"):
-            validate_targets(targets, [PrometheusTarget(name="absent", service="absent")])
-        with self.assertRaisesRegex(HarnessError, "is not down"):
-            validate_targets(targets, [PrometheusTarget(name="fixture", service="fixture", state="down")])
 
 
 class HelmValuesTest(unittest.TestCase):
@@ -543,7 +523,7 @@ class StackInstallTest(unittest.TestCase):
         self.assertIn(f"container-optimization-data-forwarder.image={local}", final)
         self.assertIn("container-optimization-data-forwarder.images.dataCollection.pullPolicy=Never", final)
 
-    def test_versions_json_and_summary_carry_all_five_fields_even_on_failure(self) -> None:
+    def test_versions_json_and_summary_carry_every_version_field_even_on_failure(self) -> None:
         def partial_install(scenario: object, repo: object, artifacts: object, ip: str, versions: dict, *_: object) -> str:
             versions["chart_version"] = "1.1.24"
             raise HarnessError("preload failed")
@@ -778,17 +758,9 @@ class ArchiveSafetyTest(unittest.TestCase):
                 archive.writestr(name, content)
         return buffer.getvalue()
 
-    def test_zip_and_tar_prefix_are_normalized_safely(self) -> None:
+    def test_the_prefix_is_stripped_from_members(self) -> None:
         payload = self._zip({"data/demo/node/a.csv": b"h\n", "data/demo/": b""})
         self.assertEqual(sorted(read_archive_files(payload, "data/demo")), ["node/a.csv"])
-
-        buffer = io.BytesIO()
-        with tarfile.open(fileobj=buffer, mode="w") as archive:
-            info = tarfile.TarInfo("./data/demo/node/b.csv")
-            body = b"h\n"
-            info.size = len(body)
-            archive.addfile(info, io.BytesIO(body))
-        self.assertEqual(sorted(read_archive_files(buffer.getvalue(), "data/demo")), ["node/b.csv"])
 
     def test_rejects_traversal(self) -> None:
         with self.assertRaisesRegex(ArchiveError, "traversal"):
@@ -801,16 +773,6 @@ class ArchiveSafetyTest(unittest.TestCase):
     def test_rejects_members_outside_the_prefix(self) -> None:
         with self.assertRaisesRegex(ArchiveError, "outside configured archive prefix"):
             read_archive_files(self._zip({"other/a.csv": b"h\n"}), "data/demo")
-
-    def test_rejects_tar_special_files(self) -> None:
-        buffer = io.BytesIO()
-        with tarfile.open(fileobj=buffer, mode="w") as archive:
-            info = tarfile.TarInfo("link.csv")
-            info.type = tarfile.SYMTYPE
-            info.linkname = "/etc/passwd"
-            archive.addfile(info)
-        with self.assertRaisesRegex(ArchiveError, "links and special files"):
-            read_archive_files(buffer.getvalue())
 
     def test_extraction_stays_inside_the_destination(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -827,7 +789,7 @@ class CsvStructureTest(unittest.TestCase):
         table = parse_csv("t.csv", b"a,b\n1,2\n\n3,4\n")
         self.assertEqual(table.headers, ["a", "b"])
         self.assertEqual(len(table), 2)
-        self.assertEqual(table.column("b"), ["2", "4"])
+        self.assertEqual([row["b"] for row in table], ["2", "4"])
 
     def test_rejects_non_utf8(self) -> None:
         with self.assertRaisesRegex(ArchiveError, "not UTF-8"):
@@ -959,15 +921,11 @@ class OracleTest(unittest.TestCase):
         self.assertAlmostEqual(oracle.requests("cpu", {"group": "workers"}), 0.35)
         self.assertEqual(oracle.requests("memory", {"group": "workers"}), 130 * 1024**2)
         self.assertAlmostEqual(oracle.reservation_percent("cpu", {"group": "workers"}), 8.75)
-        self.assertEqual(oracle.evidence[0]["nodes"], ["worker-a", "worker-b"])
-        self.assertEqual(oracle.evidence[0]["allocatable"], 4.0)
-        self.assertEqual(oracle.evidence[0]["unit"], "cores")
 
     def test_limits_use_the_same_filtering_as_requests(self) -> None:
         oracle = self._oracle()
         self.assertAlmostEqual(oracle.limits("cpu", {"group": "workers"}), 0.8)
         self.assertEqual(oracle.limits("memory", {"group": "workers"}), 160 * 1024**2)
-        self.assertEqual(oracle.evidence[0]["limits"], 0.8)
 
     def test_a_resource_a_node_does_not_advertise_counts_as_zero(self) -> None:
         nodes = copy.deepcopy(self.NODES)
@@ -976,8 +934,8 @@ class OracleTest(unittest.TestCase):
         oracle = Oracle([Snapshot("only", nodes, self.PODS)])
         self.assertEqual(oracle.capacity("nvidia.com/gpu", {"group": "workers"}), 4.0)
         self.assertEqual(oracle.requests("nvidia.com/gpu", {"group": "system"}), 0.0)
-        self.assertEqual(oracle.evidence[-1]["allocatable"], 0.0)
-        self.assertEqual(oracle.evidence[-1]["unit"], "count")
+        with self.assertRaisesRegex(HarnessError, "no allocatable"):
+            oracle.reservation_percent("nvidia.com/gpu", {"group": "system"})
         with self.assertRaisesRegex(HarnessError, "invalid Kubernetes quantity"):
             oracle.capacity("cpu", {"group": "system"})
 
@@ -1025,23 +983,6 @@ class OracleTest(unittest.TestCase):
         oracle = self._oracle(start, Snapshot("window end", self.NODES, self.PODS[:1]))
         with self.assertRaisesRegex(OracleDrift, "pod_count.*changed from 2"):
             oracle.pod_count({"group": "workers"})
-
-    def test_drift_can_be_allowed_for_a_scenario_that_mutates_on_purpose(self) -> None:
-        moved = [
-            {
-                "metadata": {"name": "extra"},
-                "spec": {
-                    "nodeName": "worker-a",
-                    "containers": [{"name": "app", "resources": {"requests": {"cpu": "1"}}}],
-                },
-                "status": {"phase": "Running"},
-            },
-            *self.PODS,
-        ]
-        oracle = self._oracle(
-            Snapshot("window start", self.NODES, self.PODS), Snapshot("window end", self.NODES, moved)
-        )
-        self.assertAlmostEqual(oracle.requests("cpu", {"group": "workers"}, allow_drift=True), 0.35)
 
     def test_quantity_suffixes(self) -> None:
         from harness.oracle import quantity

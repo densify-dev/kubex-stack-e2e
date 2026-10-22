@@ -229,20 +229,10 @@ class PrometheusQuery:
 
 
 @dataclass(frozen=True)
-class PrometheusTarget:
-    name: str
-    service: str | None = None
-    labels: Mapping[str, str] = field(default_factory=dict)
-    state: str = "up"
-    required: bool = True
-
-
-@dataclass(frozen=True)
 class PrometheusSpec:
     service: str = "kubex-prometheus-server"
     port: int = 80
     readiness_timeout: float = 600
-    targets: Sequence[PrometheusTarget] = ()
     queries: Sequence[PrometheusQuery] = ()
 
 

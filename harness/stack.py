@@ -17,10 +17,10 @@ from typing import Any
 import yaml
 
 from harness.command import HarnessError, json_value, kubectl, run, scalar, write
+from harness.receiver import UPLOAD_PORT
 from harness.spec import ForwarderSpec, ScenarioSpec, StackSpec
 
 UPLOAD_HOST = "fake.kubex.ai"
-UPLOAD_PORT = 8080
 _FORWARDER = "container-optimization-data-forwarder"
 _STABLE_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -216,14 +216,6 @@ def install(
     write(manifest, inject(rendered, UPLOAD_HOST, receiver_cluster_ip))
     kubectl(["apply", "-f", str(manifest)], repo_root)
     return cronjob
-
-
-def job_image_id(job: str, namespace: str, repo_root: Path) -> str:
-    return kubectl(
-        ["get", "pod", "-l", f"job-name={job}", "-n", namespace, "-o",
-         "jsonpath={.items[0].status.containerStatuses[0].imageID}"],
-        repo_root,
-    ).strip()
 
 
 def job_failures(job: str, namespace: str, repo_root: Path) -> int:

@@ -7,7 +7,6 @@ here and belong to fixture-truth or observed invariants instead.
 
 Every query checks drift across all captured snapshots. That **detects sampled
 drift**; it cannot prove no transient change occurred between two snapshots.
-Pass ``allow_drift=True`` on a scenario that mutates the cluster on purpose.
 """
 
 from __future__ import annotations
@@ -169,8 +168,6 @@ def _compute(snapshot: Snapshot, selector: Mapping[str, str], resource: str | No
         "nodes": sorted(names),
         kind: total,
         "allocatable": _node_total(nodes, "allocatable", resource),
-        "resource": resource,
-        "unit": "cores" if resource == "cpu" else "count" if resource and "/" in resource else "bytes",
     }
 
 
@@ -179,67 +176,50 @@ class Oracle:
     """Cluster-truth queries over one primary snapshot, with drift detection."""
 
     snapshots: list[Snapshot]
-    evidence: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def primary(self) -> Snapshot:
         return self.snapshots[0]
 
-    def _query(
-        self, calculation: str, selector: Mapping[str, str], resource: str | None, allow_drift: bool
-    ) -> float:
+    def _query(self, calculation: str, selector: Mapping[str, str], resource: str | None) -> float:
         kind = "requests" if calculation == "reservation_percent" else calculation
         computed = [(s.label, _compute(s, selector, resource, kind)) for s in self.snapshots]
         baseline_label, baseline = computed[0]
-        if not allow_drift:
-            for label, other in computed[1:]:
-                for name, value in baseline.items():
-                    if value != other[name]:
-                        args = ", ".join(a for a in (resource, repr(dict(selector))) if a)
-                        raise OracleDrift(
-                            f"cluster oracle for {calculation}({args}) drifted: "
-                            f"{name} changed from {value!r} at {baseline_label} to {other[name]!r} at {label}"
-                        )
+        for label, other in computed[1:]:
+            for name, value in baseline.items():
+                if value != other[name]:
+                    args = ", ".join(a for a in (resource, repr(dict(selector))) if a)
+                    raise OracleDrift(
+                        f"cluster oracle for {calculation}({args}) drifted: "
+                        f"{name} changed from {value!r} at {baseline_label} to {other[name]!r} at {label}"
+                    )
         if calculation == "reservation_percent":
             if baseline["allocatable"] <= 0:
                 raise HarnessError(f"no allocatable {resource} for nodes {baseline['nodes']!r}")
-            expected = 100.0 * baseline["requests"] / baseline["allocatable"]
-        else:
-            expected = baseline[kind]
-        self.evidence.append(
-            {
-                "calculation": calculation,
-                "node_selector": dict(selector),
-                "expected": expected,
-                "allow_drift": allow_drift,
-                **baseline,
-            }
-        )
-        return expected
+            return 100.0 * baseline["requests"] / baseline["allocatable"]
+        return baseline[kind]
 
-    def requests(self, resource: str, selector: Mapping[str, str], *, allow_drift: bool = False) -> float:
+    def requests(self, resource: str, selector: Mapping[str, str]) -> float:
         """Total requested ``resource`` across pods on nodes matching ``selector``."""
 
-        return self._query("requests", selector, resource, allow_drift)
+        return self._query("requests", selector, resource)
 
-    def limits(self, resource: str, selector: Mapping[str, str], *, allow_drift: bool = False) -> float:
+    def limits(self, resource: str, selector: Mapping[str, str]) -> float:
         """Total ``resource`` limit across pods on nodes matching ``selector`` (same filtering as requests)."""
 
-        return self._query("limits", selector, resource, allow_drift)
+        return self._query("limits", selector, resource)
 
-    def capacity(self, resource: str, selector: Mapping[str, str], *, allow_drift: bool = False) -> float:
+    def capacity(self, resource: str, selector: Mapping[str, str]) -> float:
         """Total node ``status.capacity`` of ``resource`` across nodes matching ``selector``."""
 
-        return self._query("capacity", selector, resource, allow_drift)
+        return self._query("capacity", selector, resource)
 
-    def reservation_percent(
-        self, resource: str, selector: Mapping[str, str], *, allow_drift: bool = False
-    ) -> float:
+    def reservation_percent(self, resource: str, selector: Mapping[str, str]) -> float:
         """Aggregate requests as a percentage of aggregate allocatable."""
 
-        return self._query("reservation_percent", selector, resource, allow_drift)
+        return self._query("reservation_percent", selector, resource)
 
-    def pod_count(self, selector: Mapping[str, str], *, allow_drift: bool = False) -> int:
+    def pod_count(self, selector: Mapping[str, str]) -> int:
         """Running pods on nodes matching ``selector`` with at least one live container or native sidecar."""
 
-        return int(self._query("pod_count", selector, None, allow_drift))
+        return int(self._query("pod_count", selector, None))

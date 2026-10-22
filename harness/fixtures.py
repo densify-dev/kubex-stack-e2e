@@ -121,16 +121,3 @@ def deploy(scenario: ScenarioSpec, repo_root: Path, artifacts: Path) -> None:
             ["rollout", "status", f"deployment/{service.name}-fixture", "-n", namespace, "--timeout=10m"],
             repo_root,
         )
-        kubectl(
-            [
-                "wait",
-                "--for=condition=Ready",
-                "pod",
-                "-l",
-                f"app.kubex.ai/fixture={service.name}",
-                "-n",
-                namespace,
-                "--timeout=5m",
-            ],
-            repo_root,
-        )

@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import subprocess
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -99,6 +101,14 @@ def create_configmap(name: str, namespace: str, key: str, source: Path, repo_roo
         cwd=repo_root,
     )
     apply_yaml(rendered, repo_root)
+
+
+def http_json(url: str, timeout: float = 10) -> Any:
+    try:
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except (OSError, urllib.error.URLError, json.JSONDecodeError) as exc:
+        raise HarnessError(f"HTTP request failed for {url}: {exc}") from exc
 
 
 def write(path: Path, content: str | bytes) -> None:

@@ -80,7 +80,6 @@ _VERSION_LABELS = {
     "collector_version": "Collector",
     "collector_image_requested": "Collector image",
     "collector_image_digest": "Collector digest",
-    "collector_image_id": "Image ID on node",
 }
 
 
