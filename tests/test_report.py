@@ -104,10 +104,13 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(len(result), ANNOTATION_LIMIT)
         self.assertNotIn("more failures", result[-1])
 
-    @patch.dict("os.environ", {"GITHUB_RUN_ID": "1"})
     def test_main_succeeds_when_a_scenario_is_missing(self) -> None:
         _artifact(self.root, "ok", _junit(2))
-        self.assertEqual(report.main([str(self.root), "ok", "gone"]), 0)
+        summary = self.root / "step-summary.md"
+        # Never the real job summary: in CI the unit-test job has one too.
+        with patch.dict("os.environ", {"GITHUB_RUN_ID": "1", "GITHUB_STEP_SUMMARY": str(summary)}):
+            self.assertEqual(report.main([str(self.root), "ok", "gone"]), 0)
+        self.assertIn("| no artifact |", summary.read_text())
 
 
 if __name__ == "__main__":
