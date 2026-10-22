@@ -209,7 +209,8 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-  # Finishes last, so its annotations and summary are the first things on the run page.
+  # Finishes last, so its annotations and summary are the first things on the run page. It goes red only
+  # if the roll-up itself breaks.
   report:
     name: Run summary
     needs: [resolve, scenario]

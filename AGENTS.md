@@ -22,7 +22,7 @@ artifact is downloaded with `gh run download <run-id> -n kind-functional-<scenar
 | Path | What |
 | --- | --- |
 | `conftest.py` | CLI options, `stack_run`/`archive`/`oracle` fixtures, failure headlines, `failures.md` and `failures.json` |
-| `harness/report.py` | CI roll-up over all scenario artifacts: run summary, annotations, exit code |
+| `harness/report.py` | CI roll-up over all scenario artifacts: run summary and annotations |
 | `harness/run.py` | Run lifecycle (`execute`), `replay`, the `Run` object tests receive |
 | `harness/spec.py` | `ScenarioSpec` and the other typed setup dataclasses |
 | `harness/archive.py` | `Archive`, `Csv`, and the assertion helpers |

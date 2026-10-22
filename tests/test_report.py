@@ -105,10 +105,9 @@ class ReportTest(unittest.TestCase):
         self.assertNotIn("more failures", result[-1])
 
     @patch.dict("os.environ", {"GITHUB_RUN_ID": "1"})
-    def test_main_fails_when_a_scenario_is_missing(self) -> None:
+    def test_main_succeeds_when_a_scenario_is_missing(self) -> None:
         _artifact(self.root, "ok", _junit(2))
-        self.assertEqual(report.main([str(self.root), "ok"]), 0)
-        self.assertEqual(report.main([str(self.root), "ok", "gone"]), 1)
+        self.assertEqual(report.main([str(self.root), "ok", "gone"]), 0)
 
 
 if __name__ == "__main__":

@@ -69,7 +69,7 @@ flowchart TD
 | --- | --- |
 | [`conftest.py`](../conftest.py) | CLI options, the `stack_run` factory, the `archive` and `oracle` fixtures, `actual`/`expected` assertion diffs, failure headlines and `failures.md`/`failures.json` in CI. |
 | [`harness/spec.py`](../harness/spec.py) | Frozen dataclasses: `ScenarioSpec`, `ClusterSpec`, `Node`, `StackSpec`, `ForwarderSpec`, `Collection`, `FixtureService`, `Metric`, `PrometheusSpec`, `Wait`. Validated at import, before any cluster work. |
-| [`harness/report.py`](../harness/report.py) | CI run roll-up: reads every scenario artifact, writes the job summary and the annotations, exits non-zero if a scenario failed or is missing. |
+| [`harness/report.py`](../harness/report.py) | CI run roll-up: reads every scenario artifact, writes the job summary and the annotations. Exits 0 once written; red legs carry the failure. |
 | [`harness/run.py`](../harness/run.py) | `execute()` drives one run. `replay()` rebuilds a `Run` from artifacts. `Run` is what tests receive. |
 | [`harness/cluster.py`](../harness/cluster.py) | Renders the Kind config, creates and deletes the cluster, applies node labels, roles, taints and extended resources. |
 | [`harness/receiver.py`](../harness/receiver.py) | Deploys the fake receiver, reads its state, strips credentials, picks the archive body. |
@@ -186,7 +186,7 @@ flowchart LR
   RV["resolve: chart version + collector digest, list scenarios"] --> M
   UT["unit-tests: pytest tests -q"] --> M
   M["scenario matrix: one job per scenarios/* dir, fail-fast off"] --> S["per leg: artifact upload, no summary or annotations"]
-  S --> RP["report: run summary, annotations, red if a scenario failed or is missing"]
+  S --> RP["report: run summary and annotations, red only if the roll-up breaks"]
 ```
 
 - `resolve` runs [`scripts/resolve_versions.py`](../scripts/resolve_versions.py) once and pins the
@@ -207,8 +207,9 @@ flowchart LR
 
   A scenario without an artifact is `no artifact`. The job writes the only job summary (headline, one row
   per scenario in matrix order, a `<details>` failure table per scenario, coverage warnings) and at most 10
-  `::error` annotations: the headline, the largest failure groups, then `N more failures`. Coverage
-  warnings are one `::warning`. GitHub adds one "Process completed with exit code 1" per red leg.
+  `::error` annotations: the headline, failure groups round-robin across scenarios (largest first), then
+  `N more failures`. Coverage warnings are one `::warning`. GitHub adds one "Process completed with exit code 1" per red leg. The job
+  exits 0 once the summary is written; the red legs carry the run's failure.
 
 ## Scope and limits
 

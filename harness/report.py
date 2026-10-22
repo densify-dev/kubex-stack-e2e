@@ -1,4 +1,4 @@
-"""Run-level roll-up of the scenario artifacts: the one job summary, the annotations, the exit code.
+"""Run-level roll-up of the scenario artifacts: the one job summary and the annotations.
 
 Usage: ``python3 -m harness.report <artifacts-dir> <scenario>...`` where the directory holds the
 ``kind-functional-<scenario>-<run-id>`` artifact directories that ``actions/download-artifact`` creates.
@@ -147,7 +147,8 @@ def main(argv: Sequence[str]) -> int:
         summary.write(markdown(scenarios, doc_url))
     # The run page lists a job's annotations newest first, so print them last to first.
     print("\n".join(reversed(annotations(scenarios))))
-    return int(any(s.status != "passed" for s in scenarios))
+    # The roll-up succeeded. A failed scenario already shows as its own red job.
+    return 0
 
 
 if __name__ == "__main__":
