@@ -63,8 +63,7 @@ def _failure(report: pytest.TestReport, rootpath: Path) -> tuple[str, str, int, 
     location, line, _ = report.location
     # The failing line (harness helpers hide their frames), else the test definition.
     path, line = (crash.path, crash.lineno) if crash else (str(rootpath / location), (line or 0) + 1)
-    # Relative to the repository, not pytest's rootdir, which path-like option values can move.
-    path = os.path.relpath(path, REPO_ROOT)
+    path = os.path.relpath(path, rootpath)
     test = report.nodeid.split("::", 1)[-1] + ("" if report.when == "call" else f" ({report.when})")
     return test, path, line, message
 
