@@ -18,7 +18,7 @@ flowchart LR
   H["pytest harness"] -- "helm template + kubectl apply" --> kind
   R -- "captured archive" --> H
   kind -- "kubectl snapshots" --> H
-  H --> A["artifacts/ + job summary"]
+  H --> A["artifacts/"]
 ```
 
 ## Quickstart
@@ -72,9 +72,13 @@ gh workflow run kind-functional.yaml --ref <branch> \
 
 ## Reading a red run
 
-Each scenario leg writes a job summary with the versions it tested and a **Failed tests** table. Each
-failure also becomes an annotation that points at the failing line. The prefix tells you whose problem
-it is:
+Start at the run page. The `Run summary` job finishes last and owns it: the annotations box lists an
+**E2E run summary** headline (failed and passed counts, chart and collector versions) and the largest
+failure groups, each pointing at the failing line. Below it, the job summary has one row per scenario
+(status, passed, failed, setup errors, a link to its doc) and a collapsible failure table per scenario.
+Scenario jobs stay red but write no summary. Their artifact still holds `summary.md` and `failures.md`.
+GitHub adds its own "Process completed with exit code 1" error for each red scenario job. The report job
+goes red when a scenario failed or has no artifact. The prefix of a failure tells you whose problem it is:
 
 | You see | Meaning | What to do |
 | --- | --- | --- |

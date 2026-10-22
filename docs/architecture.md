@@ -67,8 +67,9 @@ flowchart TD
 
 | Module | Responsibility |
 | --- | --- |
-| [`conftest.py`](../conftest.py) | CLI options, the `stack_run` factory, the `archive` and `oracle` fixtures, `actual`/`expected` assertion diffs, CI failure annotations. |
+| [`conftest.py`](../conftest.py) | CLI options, the `stack_run` factory, the `archive` and `oracle` fixtures, `actual`/`expected` assertion diffs, failure headlines and `failures.md`/`failures.json` in CI. |
 | [`harness/spec.py`](../harness/spec.py) | Frozen dataclasses: `ScenarioSpec`, `ClusterSpec`, `Node`, `StackSpec`, `ForwarderSpec`, `Collection`, `FixtureService`, `Metric`, `PrometheusSpec`, `Wait`. Validated at import, before any cluster work. |
+| [`harness/report.py`](../harness/report.py) | CI run roll-up: reads every scenario artifact, writes the job summary and the annotations, exits non-zero if a scenario failed or is missing. |
 | [`harness/run.py`](../harness/run.py) | `execute()` drives one run. `replay()` rebuilds a `Run` from artifacts. `Run` is what tests receive. |
 | [`harness/cluster.py`](../harness/cluster.py) | Renders the Kind config, creates and deletes the cluster, applies node labels, roles, taints and extended resources. |
 | [`harness/receiver.py`](../harness/receiver.py) | Deploys the fake receiver, reads its state, strips credentials, picks the archive body. |
@@ -138,7 +139,7 @@ One directory per scenario: `artifacts/kind-functional/<scenario>/`. CI uploads 
 | `prometheus-targets.json`, `prometheus-queries.json` | Readiness evidence | |
 | `kind-config.yaml`, `kubex-stack-rendered.yaml`, `fixture-inputs/` | What was applied | |
 | `diagnostics/` | Pods, events, nodes, EndpointSlices, forwarder Job and logs, per-pod logs | |
-| `pytest.xml`, `failures.md` | CI only: JUnit report and the failure table | |
+| `pytest.xml`, `failures.md`, `failures.json` | CI only: JUnit report, the failure table, and the `(test, file, line, message)` failures the roll-up reads | |
 
 ## Replay
 
@@ -174,7 +175,7 @@ Every scenario module runs `from harness.universal import *`, which adds these t
 | `test_archive_matches_inventory` | No inventory column was lost, renamed or reordered (error). New CSVs or columns become warnings. |
 | `test_expected_files` | The archive's inventory CSVs are exactly `ScenarioSpec.files`, each `populated` or `header-only` as declared. |
 
-Warnings go into `summary.md` and into one CI annotation titled **Coverage review needed**.
+Warnings go into `summary.md`. The run roll-up lists them once and emits one annotation titled **Coverage review needed**.
 
 ## CI
 
@@ -184,13 +185,30 @@ Warnings go into `summary.md` and into one CI annotation titled **Coverage revie
 flowchart LR
   RV["resolve: chart version + collector digest, list scenarios"] --> M
   UT["unit-tests: pytest tests -q"] --> M
-  M["scenario matrix: one job per scenarios/* dir, fail-fast off"] --> S["per leg: job summary, annotations, artifact upload"]
+  M["scenario matrix: one job per scenarios/* dir, fail-fast off"] --> S["per leg: artifact upload, no summary or annotations"]
+  S --> RP["report: run summary, annotations, red if a scenario failed or is missing"]
 ```
 
 - `resolve` runs [`scripts/resolve_versions.py`](../scripts/resolve_versions.py) once and pins the
   collector to a digest, so every leg tests the same chart and image.
 - Each leg runs `pytest scenarios/<name> -m <tier>` with both versions passed explicitly and a
-  30-minute timeout. `conftest.py` turns failures into grouped `::error` annotations (at most 10).
+  30-minute timeout. `conftest.py` writes `failures.md` and `failures.json` next to the artifact. A red
+  leg stays red but writes no job summary and no annotation.
+- `report` runs after the matrix (`needs`, not cancelled, so it also runs when legs failed). It downloads
+  every `kind-functional-*-<run-id>` artifact and runs `python3 -m harness.report artifacts <scenario>...`.
+  The artifacts are read as follows:
+
+  | Input | Gives |
+  | --- | --- |
+  | `pytest.xml` | Passed and failed counts. |
+  | `failures.json` | Failures, grouped by identical message as in `failures.md`. Messages starting `[setup error]` or `[call error]` count as setup errors. |
+  | `summary.md` | The stack-run state (a scenario without `collected` is a setup error) and the coverage warnings. |
+  | `versions.json` | Chart and collector versions. The headline notes when they differ between scenarios. |
+
+  A scenario without an artifact is `no artifact`. The job writes the only job summary (headline, one row
+  per scenario in matrix order, a `<details>` failure table per scenario, coverage warnings) and at most 10
+  `::error` annotations: the headline, the largest failure groups, then `N more failures`. Coverage
+  warnings are one `::warning`. GitHub adds one "Process completed with exit code 1" per red leg.
 
 ## Scope and limits
 
@@ -209,5 +227,5 @@ covered".
 - **Silent query failures.** A failing workload query writes no line to `log.txt`, so `test_log_is_clean`
   cannot see it. A missing file shows up in `test_expected_files`.
 - **Red tests stay red.** The repo keeps no list of known-failing tests.
-- **Reporting.** CI has no third-party JUnit reporter and no run-level roll-up job, whose summary would
-  render below the per-scenario ones.
+- **Reporting.** CI has no third-party JUnit reporter. The run roll-up reads only what a leg uploaded, so a
+  leg that never uploaded shows as `no artifact` without a reason.

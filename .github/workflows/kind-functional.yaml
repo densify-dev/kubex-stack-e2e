@@ -178,30 +178,26 @@ jobs:
             --stack-chart-version "${CHART_VERSION}" \
             --collector-image "${COLLECTOR_IMAGE}"
 
-      - name: Publish scenario summary
+      # The report job writes the only job summary and every annotation of the run.
+      - name: Prepare scenario artifact
         if: always()
         run: |
           summary="artifacts/kind-functional/${SCENARIO}/summary.md"
-          failures="artifacts/kind-functional/${SCENARIO}/failures.md"
           report="artifacts/kind-functional/${SCENARIO}-pytest.xml"
           mkdir -p "$(dirname "${summary}")"
           if [[ -f "${report}" ]]; then
             mv "${report}" "$(dirname "${summary}")/pytest.xml"
           fi
           if [[ -f "${summary}" ]]; then
-            # The status goes under the scenario heading, the failure table after the run details.
+            # The status goes under the scenario heading.
             {
               head -n 2 "${summary}"
               printf '**Pytest status:** %s\n\n' "${{ steps.functional-scenario.outcome }}"
               tail -n +3 "${summary}"
             } > "${summary}.new"
             mv "${summary}.new" "${summary}"
-            cat "${summary}" >> "${GITHUB_STEP_SUMMARY}"
           else
-            printf '# Scenario %s\n\n**Stack run:** failed before summary generation\n' "${SCENARIO}" >> "${GITHUB_STEP_SUMMARY}"
-          fi
-          if [[ -f "${failures}" ]]; then
-            { echo; cat "${failures}"; } >> "${GITHUB_STEP_SUMMARY}"
+            printf '# Scenario %s\n\n**Stack run:** failed before summary generation\n' "${SCENARIO}" > "${summary}"
           fi
 
       - name: Upload scenario artifact
@@ -212,3 +208,36 @@ jobs:
           path: artifacts/kind-functional/${{ matrix.scenario }}
           if-no-files-found: warn
           retention-days: 14
+
+  # Finishes last, so its annotations and summary are the first things on the run page.
+  report:
+    name: Run summary
+    needs: [resolve, scenario]
+    if: ${{ !cancelled() && needs.scenario.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SCENARIOS: ${{ needs.resolve.outputs.scenarios }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Download scenario artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kind-functional-*-${{ github.run_id }}
+          path: artifacts
+
+      - name: Write run summary
+        run: |
+          mapfile -t scenarios < <(jq -r '.[]' <<<"${SCENARIOS}")
+          python3 -m harness.report artifacts "${scenarios[@]}"

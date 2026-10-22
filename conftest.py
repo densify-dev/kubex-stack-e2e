@@ -8,6 +8,7 @@ modules never provision anything at import time.
 
 from __future__ import annotations
 
+import json
 import os
 from contextlib import contextmanager
 from pathlib import Path
@@ -17,15 +18,11 @@ import pytest
 
 from harness.archive import Archive
 from harness.artifacts import failure_digest
-from harness.coverage import workflow_warning
 from harness.oracle import Oracle
 from harness.run import Run, execute, replay
 from harness.spec import ScenarioSpec
 
 REPO_ROOT = Path(__file__).parent.resolve()
-
-# Collected from every Run at session end; printed as one CI annotation by pytest_terminal_summary.
-COVERAGE_WARNINGS: list[str] = []
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
@@ -90,20 +87,17 @@ def pytest_assertrepr_compare(op: str, left: object, right: object) -> list[str]
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    if os.environ.get("GITHUB_ACTIONS") != "true":
+    """CI sets FAILURES_MD; the run-level report job reads failures.json and owns every annotation."""
+
+    if not (digest_path := os.environ.get("FAILURES_MD")):
         return
-    if COVERAGE_WARNINGS:
-        terminalreporter.write_line(workflow_warning(COVERAGE_WARNINGS))
     reports = [r for kind in ("failed", "error") for r in terminalreporter.stats.get(kind, [])]
     failures = [_failure(r, terminalreporter.config.rootpath) for r in reports]
     if failures:
-        table, annotations = failure_digest(failures)
-        for annotation in annotations:
-            terminalreporter.write_line(annotation)
-        # The workflow appends it to the job summary after the scenario heading.
-        if digest_path := os.environ.get("FAILURES_MD"):
-            Path(digest_path).parent.mkdir(parents=True, exist_ok=True)
-            Path(digest_path).write_text(table, encoding="utf-8")
+        path = Path(digest_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(failure_digest(failures), encoding="utf-8")
+        path.with_suffix(".json").write_text(json.dumps(failures), encoding="utf-8")
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -136,7 +130,6 @@ def stack_run(pytestconfig: pytest.Config, repo_root: Path, tmp_path_factory: py
                 scenario, scenario_dir, repo_root, artifacts_root, chart_version, collector_image, keep_cluster
             ) as active:
                 yield active
-        COVERAGE_WARNINGS.extend(active.coverage_warnings)
 
     return _run
 

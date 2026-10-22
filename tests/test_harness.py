@@ -266,7 +266,7 @@ class CommandAndReceiverTest(unittest.TestCase):
             )
 
     def test_failure_digest_groups_by_message_and_escapes(self) -> None:
-        table, annotations = artifacts_mod.failure_digest(
+        table = artifacts_mod.failure_digest(
             [
                 ("test_os[a]", "s/t.py", 10, "assert '' == 'linux'"),
                 ("test_os[b]", "s/t.py", 10, "assert '' == 'linux'"),
@@ -278,12 +278,12 @@ class CommandAndReceiverTest(unittest.TestCase):
         self.assertIn("4 failed.", table)
         self.assertIn("| test_os[a]<br>test_os[b]<br>and 1 more | assert '' == 'linux' | `s/t.py:10` |", table)
         self.assertIn("| test_cpu | assert 1 == 2 \\| 100% | `s/t.py:20` |", table)
+
+    def test_failure_annotation_escapes_and_points_at_the_first_test(self) -> None:
+        group = ("assert 1 == 2 | 100%", [("test_a", "s/t.py", 10), ("test_b", "s/t.py", 11), ("test_c", "s/t.py", 12)])
         self.assertEqual(
-            annotations,
-            [
-                "::error file=s/t.py,line=10,title=test_os[a]%2C test_os[b]%2C and 1 more::assert '' == 'linux'",
-                "::error file=s/t.py,line=20,title=test_cpu::assert 1 == 2 | 100%25",
-            ],
+            artifacts_mod.failure_annotation(group, shown=2, prefix="scn: "),
+            "::error file=s/t.py,line=10,title=scn%3A test_a%2C test_b%2C and 1 more::assert 1 == 2 | 100%25",
         )
 
     def test_prometheus_reconnects_and_stops_forward(self) -> None:
@@ -1083,14 +1083,6 @@ class FailureOutputTest(unittest.TestCase):
         self.assertEqual(failure("assert actual 1, expected 2")[3], "assert actual 1, expected 2")
         self.assertEqual(failure("KeyError: 'k'")[3], "[call error] KeyError: 'k'")
         self.assertEqual(failure("RuntimeError: no cluster", "setup")[::3], ("test_x[a] (setup)", "[setup error] RuntimeError: no cluster"))
-
-    def test_failure_digest_caps_annotations(self) -> None:
-        _, annotations = artifacts_mod.failure_digest([(f"test_{i}", "s/t.py", i, f"message {i}") for i in range(15)])
-        self.assertEqual(len(annotations), artifacts_mod.ANNOTATION_LIMIT)
-        self.assertEqual(annotations[-1], "::error title=6 more failures::see the job summary table")
-        _, annotations = artifacts_mod.failure_digest([(f"test_{i}", "s/t.py", i, f"message {i}") for i in range(10)])
-        self.assertEqual(len(annotations), 10)
-        self.assertNotIn("more failures", annotations[-1])
 
 
 if __name__ == "__main__":

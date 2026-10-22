@@ -116,36 +116,52 @@ def _command_escape(value: str, *, property_value: bool = False) -> str:
 # GitHub keeps at most 10 error annotations per step and drops the rest silently.
 ANNOTATION_LIMIT = 10
 
+Failure = tuple[str, str, int, str]  # test, file, line, message
+Group = tuple[str, list[tuple[str, str, int]]]  # message, its (test, file, line) entries
 
-def failure_digest(failures: Sequence[tuple[str, str, int, str]], shown: int = 5) -> tuple[str, list[str]]:
-    """Markdown table and GitHub ``::error`` annotations for (test, file, line, message) failures.
 
-    Failures with the same message share one row and one annotation, so a broken fixture is one
-    entry, not forty. Each entry points at its first test.
-    """
+def group_failures(failures: Sequence[Failure]) -> list[Group]:
+    """Failures with the same message share one group, so a broken fixture is one entry, not forty."""
 
     grouped: dict[str, list[tuple[str, str, int]]] = {}
     for test, file, line, message in failures:
         grouped.setdefault(message, []).append((test, file, line))
+    return list(grouped.items())
+
+
+def _listed(tests: Sequence[tuple[str, str, int]], shown: int) -> list[str]:
+    more = [f"and {len(tests) - shown} more"] if len(tests) > shown else []
+    return [test for test, _, _ in tests[:shown]] + more
+
+
+def failure_table(groups: Sequence[Group], shown: int = 5) -> list[str]:
+    """Markdown table lines, one row per group, pointing at the group's first test."""
 
     def cell(value: str) -> str:
         return value.replace("|", "\\|")
 
-    def names(tests: list[tuple[str, str, int]]) -> list[str]:
-        more = [f"and {len(tests) - shown} more"] if len(tests) > shown else []
-        return [test for test, _, _ in tests[:shown]] + more
-
-    rows, annotations = [], []
-    for message, tests in grouped.items():
+    rows = []
+    for message, tests in groups:
         _, file, line = tests[0]
-        listed = names(tests)
-        rows.append(f"| {'<br>'.join(cell(name) for name in listed)} | {cell(message)} | `{file}:{line}` |")
-        annotations.append(
-            f"::error file={_command_escape(file, property_value=True)},line={line},"
-            f"title={_command_escape(', '.join(listed), property_value=True)}::{_command_escape(message)}"
-        )
-    if len(annotations) > ANNOTATION_LIMIT:
-        hidden = sum(len(tests) for tests in list(grouped.values())[ANNOTATION_LIMIT - 1 :])
-        annotations = annotations[: ANNOTATION_LIMIT - 1] + [f"::error title={hidden} more failures::see the job summary table"]
-    table = ["## Failed tests", "", f"{len(failures)} failed.", "", "| Test | Failure | Where |", "| --- | --- | --- |", *rows]
-    return "\n".join(table) + "\n\n", annotations
+        names = "<br>".join(cell(name) for name in _listed(tests, shown))
+        rows.append(f"| {names} | {cell(message)} | `{file}:{line}` |")
+    return ["| Test | Failure | Where |", "| --- | --- | --- |", *rows]
+
+
+def failure_annotation(group: Group, shown: int = 5, prefix: str = "") -> str:
+    """One ``::error`` annotation on the group's first test."""
+
+    message, tests = group
+    _, file, line = tests[0]
+    title = prefix + ", ".join(_listed(tests, shown))
+    return (
+        f"::error file={_command_escape(file, property_value=True)},line={line},"
+        f"title={_command_escape(title, property_value=True)}::{_command_escape(message)}"
+    )
+
+
+def failure_digest(failures: Sequence[Failure], shown: int = 5) -> str:
+    """Markdown failure table for a scenario's ``failures.md``."""
+
+    table = failure_table(group_failures(failures), shown)
+    return "\n".join(["## Failed tests", "", f"{len(failures)} failed.", "", *table]) + "\n\n"
