@@ -20,6 +20,7 @@ KEYS = {
     "Namespace", "EntityName", "EntityType", "ContainerName", "HpaName", "RqName", "CrqName",
 }
 _NGL = "scenarios/nodegroup-labels/test_nodegroup_labels.py::"
+_AUDIT_TIME = "test:harness/universal.py::test_audit_time_is_when_the_forwarder_ran"
 _NP = "scenarios/node-pressure/test_node_pressure.py::"
 _NGR = "scenarios/nodegroup-roles/test_nodegroup_roles.py::"
 _NE = "scenarios/node-exporter/test_node_exporter.py::"
@@ -41,7 +42,7 @@ def _t(*refs: str) -> str:
 def _csv(header: str, **cols: str) -> dict[str, str]:
     names = header.split(",")
     assert set(cols) <= set(names), f"unknown column(s) {set(cols) - set(names)} in {header}"
-    return {c: "key" if c in KEYS else cols.get(c, "unclassified") for c in names}
+    return {c: cols[c] if c in cols else "key" if c in KEYS else "unclassified" for c in names}
 
 
 CL = "Name,MetricTime,"
@@ -141,7 +142,7 @@ _GROUP_RESERVATION = _t(_NP + "test_group_reservation_percent_matches_the_cluste
 
 
 INVENTORY: dict[str, dict[str, str]] = {
-    "cluster/config.csv": _csv("AuditTime,Name"),
+    "cluster/config.csv": _csv("AuditTime,Name", AuditTime=_AUDIT_TIME),
     "cluster/attributes.csv": _csv("Name,VirtualTechnology,VirtualDomain,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,K8sVersion", **dict.fromkeys(("VirtualTechnology", "VirtualDomain", "K8sVersion"), _t(_NP + "test_cluster_attributes_match_the_cluster")), **dict.fromkeys(("CpuLimit", "CpuRequest", "MemoryLimit", "MemoryRequest"), _t(_NP + "test_cluster_attributes_match_the_cluster", _TERMINAL_ATTRIBUTES))),
     "cluster/cpu_requests.csv": _csv(CL + "CpuRequests", CpuRequests=_t(_NP + "test_cluster_requests_match_the_cluster", _CR + "test_terminal_pods_are_excluded_from_series")),
     "cluster/cpu_reservation_percent.csv": _csv(CL + "CpuReservationPercent", CpuReservationPercent=_t(_NP + "test_cluster_reservation_percent_matches_the_cluster")),
@@ -164,7 +165,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "cluster/net_received_packets.csv": _csv(CL + "NetReceivedPackets", NetReceivedPackets=_t(_NE + "test_values_match_the_fixture")),
     "cluster/net_sent_packets.csv": _csv(CL + "NetSentPackets", NetSentPackets=_t(_NE + "test_values_match_the_fixture")),
     "cluster/net_total_packets.csv": _csv(CL + "NetTotalPackets", NetTotalPackets=_t(_NE + "test_values_match_the_fixture")),
-    "node/config.csv": _csv("AuditTime,ClusterName,NodeName,HwModel,OsName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwMaxNetworkIoBps", **_NODE_CONFIG),
+    "node/config.csv": _csv("AuditTime,ClusterName,NodeName,HwModel,OsName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwMaxNetworkIoBps", AuditTime=_AUDIT_TIME, **_NODE_CONFIG),
     "node/attributes.csv": _csv("ClusterName,NodeName,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,OsArchitecture,NetworkSpeed,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,CapacityPods,CapacityCpu,CapacityCpuMcores,CapacityMemory,CapacityGpu,CapacityEphemeralStorage,CapacityHugePages,AllocatablePods,AllocatableCpu,AllocatableCpuMcores,AllocatableMemory,AllocatableGpu,AllocatableEphemeralStorage,AllocatableHugePages,MemoryTotalBytes,GpuTotal,GpuMemoryTotal,GpuReplicas,ProviderId,K8sVersion,NodeLabels,GpuLabels,NodeTaints,GpuVendor,GpuModel,GpuSharingStrategy,GpuMpsCapable,GpuVgpuPresent,GpuMigCapable,GpuMigStrategy", **_NODE_ATTRIBUTES),
     "node/cpu_limit.csv": _csv(NO + "CpuLimit", CpuLimit=_NODE_SERIES_TERMINAL),
     "node/cpu_request.csv": _csv(NO + "CpuRequest", CpuRequest=_NODE_SERIES_TERMINAL + "," + _KR + "test_worker_cpu_series"),
@@ -206,7 +207,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "node/net_received_packets.csv": _csv(NO + "NetReceivedPackets", NetReceivedPackets=_t(_NE + "test_values_match_the_fixture")),
     "node/net_sent_packets.csv": _csv(NO + "NetSentPackets", NetSentPackets=_t(_NE + "test_values_match_the_fixture")),
     "node/net_total_packets.csv": _csv(NO + "NetTotalPackets", NetTotalPackets=_t(_NE + "test_values_match_the_fixture")),
-    "node_group/config.csv": _csv("AuditTime,ClusterName,NodeGroupName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwModel,OsName", **_GROUP_CONFIG),
+    "node_group/config.csv": _csv("AuditTime,ClusterName,NodeGroupName,HwTotalCpus,HwTotalPhysicalCpus,HwCoresPerCpu,HwThreadsPerCore,HwTotalMemory,HwModel,OsName", AuditTime=_AUDIT_TIME, **_GROUP_CONFIG),
     "node_group/attributes.csv": _csv("ClusterName,NodeGroupName,VirtualTechnology,VirtualDomain,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,CurrentSize,CurrentNodes,NodeLabels", **_GROUP_ATTRIBUTES),
     "node_group/current_size.csv": _csv(NG + "CurrentSize", CurrentSize=_t(_NP + "test_current_size_holds_for_every_sample", _NGR + "test_current_size_holds_for_every_sample")),
     "node_group/cpu_requests.csv": _csv(NG + "CpuRequests", CpuRequests=_t(_NP + "test_group_requests_match_the_cluster", _NGR + "test_requests_match_the_cluster", _CR + "test_terminal_pods_are_excluded_from_series")),
@@ -235,7 +236,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "node_group/gpu_mem_utilization_avg.csv": _csv(NG + "GpuMemUtilizationAvg", GpuMemUtilizationAvg=_t(_GDP + "test_group_dcgm_series", _GTF + "test_dcgm_group_series_keep_the_scrape_node")),
     "node_group/gpu_mem_used_avg.csv": _csv(NG + "GpuMemUsedAvg", GpuMemUsedAvg=_t(_GDP + "test_group_dcgm_series", _GTF + "test_dcgm_group_series_keep_the_scrape_node")),
     "node_group/gpu_power_usage_avg.csv": _csv(NG + "GpuPowerUsageAvg", GpuPowerUsageAvg=_t(_GDP + "test_group_dcgm_series", _GTF + "test_dcgm_group_series_keep_the_scrape_node")),
-    "container/config.csv": _csv("AuditTime,ClusterName,Namespace,EntityName,EntityType,ContainerName,HwTotalMemory,GpuMemoryTotal,OsName,HwManufacturer", **dict.fromkeys(("HwTotalMemory", "OsName", "HwManufacturer"), _t(_CR + "test_container_config")), GpuMemoryTotal=_t(_GDP + "test_container_gpu_memory_total", _GTF + "test_container_gpu_memory_total")),
+    "container/config.csv": _csv("AuditTime,ClusterName,Namespace,EntityName,EntityType,ContainerName,HwTotalMemory,GpuMemoryTotal,OsName,HwManufacturer", AuditTime=_AUDIT_TIME, **dict.fromkeys(("HwTotalMemory", "OsName", "HwManufacturer"), _t(_CR + "test_container_config")), GpuMemoryTotal=_t(_GDP + "test_container_gpu_memory_total", _GTF + "test_container_gpu_memory_total")),
     "container/attributes.csv": _csv("ClusterName,Namespace,EntityName,EntityType,ContainerName,ContainerType,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,ContainerLabels,PodLabels,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,GpuLimit,GpuRequest,GpuLimitFloat,GpuRequestFloat,CurrentNodes,PowerState,CreatedByKind,CreatedByName,CurrentSize,CreateTime,ContainerRestarts,NamespaceLabels,NamespaceCpuRequest,NamespaceCpuLimit,NamespaceMemoryRequest,NamespaceMemoryLimit,NamespacePodsLimit,HpaName,HpaLabels,HpaTargetMetricName,HpaTargetMetricType,HpaTargetMetricValue,HpaTargetMetrics,QosClass,GpuModel,GpuSharingStrategy,EphemeralStorageRequest,EphemeralStorageLimit,JvmHeapInitMib,JvmHeapMaxMib,Runtimes", **dict.fromkeys(("EphemeralStorageRequest", "EphemeralStorageLimit"), _t(_EPH + "test_container_attributes_in_mib")), **_CONTAINER_ATTRIBUTES),
     # IsPid1 is decode-only for restart events: the restart query encodes no pid1 (container/events.go:143-147)
     "container/events.csv": _csv("ClusterName,Namespace,EntityName,EntityType,ContainerName,EventTime,ExitCode,IsPid1", **dict.fromkeys(("ExitCode", "IsPid1"), _t(_CR + "test_restart_events"))),
@@ -296,7 +297,7 @@ INVENTORY: dict[str, dict[str, str]] = {
     "container/hpa_memory_target_utilization.csv": _csv(HP + "HpaMemoryTargetUtilization", HpaMemoryTargetUtilization=_t(_HPA + "test_hpa_series_values")),
     "container/hpa_memory_current_avg.csv": _csv(HP + "HpaMemoryCurrentAvg", HpaMemoryCurrentAvg=_HPA_NO_CURRENT),
     "container/hpa_memory_current_utilization.csv": _csv(HP + "HpaMemoryCurrentUtilization", HpaMemoryCurrentUtilization=_HPA_NO_CURRENT),
-    "hpa/hpa_extra_config.csv": _csv("AuditTime,ClusterName,Namespace,EntityName,EntityType,ContainerName,HpaName,OsName,HwManufacturer", **dict.fromkeys(("OsName", "HwManufacturer"), _t(_HPA + "test_orphan_config"))),
+    "hpa/hpa_extra_config.csv": _csv("AuditTime,ClusterName,Namespace,EntityName,EntityType,ContainerName,HpaName,OsName,HwManufacturer", AuditTime=_AUDIT_TIME, **dict.fromkeys(("OsName", "HwManufacturer"), _t(_HPA + "test_orphan_config"))),
     "hpa/hpa_extra_attributes.csv": _csv("ClusterName,Namespace,EntityName,EntityType,ContainerName,HpaName,HpaLabels,HpaTargetMetricName,HpaTargetMetricType,HpaTargetMetricValue,HpaTargetMetrics", **dict.fromkeys(("HpaLabels", "HpaTargetMetricName", "HpaTargetMetricType", "HpaTargetMetricValue", "HpaTargetMetrics"), _t(_HPA + "test_orphan_attributes_describe_their_targets"))),
     "hpa/hpa_extra_max_replicas.csv": _csv(HP + "HpaMaxReplicas", HpaMaxReplicas=_t(_HPA + "test_hpa_series_values")),
     "hpa/hpa_extra_min_replicas.csv": _csv(HP + "HpaMinReplicas", HpaMinReplicas=_t(_HPA + "test_hpa_series_values")),
@@ -310,14 +311,14 @@ INVENTORY: dict[str, dict[str, str]] = {
     "hpa/hpa_extra_memory_target_utilization.csv": _csv(HP + "HpaMemoryTargetUtilization", HpaMemoryTargetUtilization=_t(_HPA + "test_hpa_series_values")),
     "hpa/hpa_extra_memory_current_avg.csv": _csv(HP + "HpaMemoryCurrentAvg", HpaMemoryCurrentAvg=_HPA_EXTRA_NO_METRICS),
     "hpa/hpa_extra_memory_current_utilization.csv": _csv(HP + "HpaMemoryCurrentUtilization", HpaMemoryCurrentUtilization=_HPA_EXTRA_NO_METRICS),
-    "rq/config.csv": _csv("AuditTime,ClusterName,Namespace,RqName"),
+    "rq/config.csv": _csv("AuditTime,ClusterName,Namespace,RqName", AuditTime=_AUDIT_TIME),
     "rq/attributes.csv": _csv("ClusterName,Namespace,RqName,VirtualTechnology,VirtualDomain,VirtualDatacenter,CreateTime,ResourceMetadata,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,CurrentSize,NamespaceCpuLimit,NamespaceCpuRequest,NamespaceMemoryLimit,NamespaceMemoryRequest,NamespacePodsLimit", **dict.fromkeys(("VirtualTechnology", "VirtualDomain", "VirtualDatacenter", "CreateTime", "ResourceMetadata"), _t(_CR + "test_quota_description")), **dict.fromkeys(("CpuLimit", "CpuRequest", "MemoryLimit", "MemoryRequest", "CurrentSize", "NamespaceCpuLimit", "NamespaceCpuRequest", "NamespaceMemoryLimit", "NamespaceMemoryRequest", "NamespacePodsLimit"), _t(_CR + "test_quota_attributes"))),
     "rq/cpu_limits.csv": _csv(RQ + "CpuLimits", CpuLimits=_RQ_SERIES),
     "rq/cpu_requests.csv": _csv(RQ + "CpuRequests", CpuRequests=_t(_CR + "test_quota_series_match_status_used", _KR + "test_quota_cpu_requests_series")),
     "rq/mem_limits.csv": _csv(RQ + "MemLimits", MemLimits=_RQ_SERIES),
     "rq/mem_requests.csv": _csv(RQ + "MemRequests", MemRequests=_RQ_SERIES),
     "rq/pods.csv": _csv(RQ + "PodsLimits", PodsLimits=_RQ_SERIES),
-    "crq/config.csv": _csv("AuditTime,ClusterName,CrqName"),
+    "crq/config.csv": _csv("AuditTime,ClusterName,CrqName", AuditTime=_AUDIT_TIME),
     "crq/attributes.csv": _csv("ClusterName,CrqName,VirtualTechnology,VirtualDomain,VirtualDatacenter,VirtualCluster,SelectorType,SelectorKey,SelectorValue,CreateTime,NamespaceLabels,ResourceMetadata,CpuLimit,CpuRequest,MemoryLimit,MemoryRequest,CurrentSize,NamespaceCpuLimit,NamespaceCpuRequest,NamespaceMemoryLimit,NamespaceMemoryRequest,NamespacePodsLimit,Namespaces"),
     "crq/cpu_limits.csv": _csv(CR + "CpuLimits"),
     "crq/cpu_requests.csv": _csv(CR + "CpuRequests"),

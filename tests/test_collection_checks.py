@@ -169,6 +169,33 @@ class UniversalTest(unittest.TestCase):
             check(set())
 
 
+class AuditTimeTest(unittest.TestCase):
+    @staticmethod
+    def _run(audit_time: str) -> SimpleNamespace:
+        pod = {
+            "metadata": {"labels": {"job-name": "j"}},
+            "status": {
+                "phase": "Succeeded",
+                "containerStatuses": [
+                    {"state": {"terminated": {"startedAt": "2026-10-22T13:39:48Z", "finishedAt": "2026-10-22T13:40:02Z"}}}
+                ],
+            },
+        }
+        return SimpleNamespace(
+            scenario=ScenarioSpec(name="demo", cluster=ClusterSpec(workers=[Node()])),
+            job_name="j",
+            snapshots=[Snapshot("after upload", [], [pod])],
+            archive=_archive({"cluster/config.csv": f"AuditTime,Name\n{audit_time},demo\n"}),
+        )
+
+    def test_the_minute_of_the_forwarder_run_passes_and_a_shifted_window_fails(self) -> None:
+        for audit_time in ("2026-10-22T13:39:00Z", "2026-10-22T13:40:00Z"):
+            universal.test_audit_time_is_when_the_forwarder_ran(self._run(audit_time))
+        for audit_time in ("2026-10-22T13:38:00Z", "2026-10-22T14:39:00Z"):
+            with self.assertRaisesRegex(AssertionError, "outside the forwarder run"):
+                universal.test_audit_time_is_when_the_forwarder_ran(self._run(audit_time))
+
+
 NODES = [
     {"metadata": {"name": "w1", "labels": {"g": "x"}}, "status": {"allocatable": {"cpu": "2", "memory": "1Gi"}}},
     {"metadata": {"name": "w2", "labels": {"g": "x"}}, "status": {"allocatable": {"cpu": "2", "memory": "1Gi"}}},
