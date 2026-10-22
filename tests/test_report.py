@@ -104,6 +104,10 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(len(result), ANNOTATION_LIMIT)
         self.assertNotIn("more failures", result[-1])
 
+    def test_a_green_run_is_a_notice_not_an_error(self) -> None:
+        _artifact(self.root, "ok", _junit(2))
+        self.assertTrue(report.annotations(self.load("ok"))[0].startswith("::notice title=E2E run summary::0 failed, 2 passed"))
+
     def test_main_succeeds_when_a_scenario_is_missing(self) -> None:
         _artifact(self.root, "ok", _junit(2))
         summary = self.root / "step-summary.md"

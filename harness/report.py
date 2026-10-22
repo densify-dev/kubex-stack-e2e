@@ -128,7 +128,8 @@ def annotations(scenarios: Sequence[Scenario]) -> list[str]:
     groups = [(group, name) for *_, group, name in sorted(ranked, key=lambda item: item[:2])]
     room = ANNOTATION_LIMIT - 1
     shown = groups if len(groups) <= room else groups[: room - 1]
-    result = [f"::error title=E2E run summary::{_command_escape(headline(scenarios))}"]
+    level = "error" if any(s.status != "passed" for s in scenarios) else "notice"
+    result = [f"::{level} title=E2E run summary::{_command_escape(headline(scenarios))}"]
     result += [failure_annotation(group, prefix=f"{name}: ") for group, name in shown]
     if hidden := sum(len(group[1]) for group, _ in groups[len(shown) :]):
         result.append(f"::error title={hidden} more failures::see the run summary")
