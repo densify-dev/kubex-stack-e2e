@@ -10,6 +10,7 @@ import yaml
 
 from harness.command import HarnessError, kubectl, run, scalar
 from harness.spec import ClusterSpec
+from harness.versions import KIND_NODE_IMAGE
 
 
 def render_config(cluster: ClusterSpec) -> str:
@@ -23,7 +24,7 @@ def render_config(cluster: ClusterSpec) -> str:
     control_plane_seen = 0
     for role, node in cluster.nodes():
         item: dict[str, Any] = {"role": role}
-        settings = {**cluster.kubelet, **node.kubelet}
+        settings = node.kubelet
         if settings:
             if role == "control-plane":
                 control_plane_seen += 1
@@ -60,13 +61,11 @@ def assert_absent(cluster_name: str, repo_root: Path) -> None:
         raise HarnessError(f"Kind cluster already exists: {cluster_name}")
 
 
-def create(cluster: ClusterSpec, cluster_name: str, config_path: Path, repo_root: Path) -> None:
+def create(cluster_name: str, config_path: Path, repo_root: Path) -> None:
     """Create a cluster after ``assert_absent`` establishes ownership."""
 
     args = ["kind", "create", "cluster", "--name", cluster_name, "--config", str(config_path), "--wait", "5m"]
-    if cluster.node_image:
-        args.extend(["--image", cluster.node_image])
-    run(args, cwd=repo_root, timeout=900)
+    run([*args, "--image", KIND_NODE_IMAGE], cwd=repo_root, timeout=900)
 
 
 def delete(cluster_name: str, repo_root: Path) -> None:

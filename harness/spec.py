@@ -15,7 +15,6 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Mapping, Sequence
 
-from harness.versions import COLLECTOR_IMAGE, KIND_NODE_IMAGE, STACK_CHART_VERSION
 
 CLUSTER_NAME_PREFIX = "kubex-e2e-"
 INTERVAL_SECONDS = {"seconds": 1, "minutes": 60, "hours": 3600}
@@ -86,10 +85,8 @@ class Node:
 
 @dataclass(frozen=True)
 class ClusterSpec:
-    node_image: str = KIND_NODE_IMAGE
     control_planes: Sequence[Node] = (Node(),)
     workers: Sequence[Node] = ()
-    kubelet: Mapping[str, str] = field(default_factory=dict)
     # KubeletConfiguration fields applied to every node, e.g. {"crashLoopBackOff": {"maxContainerRestartPeriod": "1s"}}
     kubelet_configuration: Mapping[str, Any] = field(default_factory=dict)
 
@@ -131,18 +128,10 @@ class Collection:
             if getattr(self, name) < 1:
                 raise SpecError(f"Collection.{name}: must be at least 1")
 
-    def derived_window_seconds(self) -> float:
-        return float(self.interval_size) * INTERVAL_SECONDS[self.interval] + 10
-
 
 @dataclass(frozen=True)
 class StackSpec:
-    chart: str = "kubex/kubex-automation-stack"
-    repository: str = "https://densify-dev.github.io/helm-charts"
-    version: str | None = STACK_CHART_VERSION
-    release_name: str = "kubex"
     namespace: str = "kubex"
-    collector_image: str | None = COLLECTOR_IMAGE
     helm_overrides: Mapping[str, Any] = field(default_factory=dict)
 
 
@@ -153,7 +142,6 @@ class Metric:
     name: str
     type: Literal["gauge", "counter"]
     value: float = 0.0
-    help: str | None = None
     labels: Mapping[str, str] = field(default_factory=dict)
     rate: float | None = None
 
@@ -164,7 +152,6 @@ class Metric:
             raise SpecError(f"Metric {self.name!r}: gauges cannot define a rate")
         if self.type == "counter" and self.rate is None:
             raise SpecError(f"Metric {self.name!r}: counters require a rate")
-        self._validate([self])
 
     @staticmethod
     def _validate(metrics: Sequence["Metric"]) -> None:
@@ -182,7 +169,7 @@ class Metric:
 
         payload: dict[str, Any] = {
             "name": self.name,
-            "help": self.help if self.help is not None else self.name,
+            "help": self.name,
             "type": self.type,
             "labels": {str(k): str(v) for k, v in self.labels.items()},
             "value": float(self.value),
@@ -198,9 +185,7 @@ class FixtureService:
     metrics: Sequence[Metric]
     namespace: str | None = None
     port: int = 9100
-    target_port: int | None = None
     labels: Mapping[str, str] = field(default_factory=dict)
-    annotations: Mapping[str, str] = field(default_factory=dict)
     # Node name the fixture pod is pinned to (kubernetes.io/hostname), for a fixture that stands in for one node's exporter.
     node: str | None = None
 
@@ -210,15 +195,9 @@ class FixtureService:
             _check_kubernetes_name(self.namespace, f"FixtureService {self.name!r}.namespace")
         if not self.metrics:
             raise SpecError(f"FixtureService {self.name!r}: requires at least one metric")
-        for field_name in ("port", "target_port"):
-            value = getattr(self, field_name)
-            if value is not None and not 1 <= value <= 65535:
-                raise SpecError(f"FixtureService {self.name!r}: {field_name} must be between 1 and 65535")
+        if not 1 <= self.port <= 65535:
+            raise SpecError(f"FixtureService {self.name!r}: port must be between 1 and 65535")
         Metric._validate(self.metrics)
-
-    @property
-    def container_port(self) -> int:
-        return self.target_port if self.target_port is not None else self.port
 
 
 @dataclass(frozen=True)
@@ -238,17 +217,8 @@ class PrometheusSpec:
 
 @dataclass(frozen=True)
 class ForwarderSpec:
-    cronjob_name: str | None = None
-    job_name: str | None = None
-    window_seconds: float | None = None
-    wait_timeout: float = 900
-    poll_interval: float = 5
+    window_seconds: float = 180
     collection: Collection = Collection()
-
-    def window(self) -> float:
-        if self.window_seconds is not None:
-            return float(self.window_seconds)
-        return self.collection.derived_window_seconds()
 
 
 @dataclass(frozen=True)
@@ -258,6 +228,54 @@ class Wait:
     namespace: str | None = None
     condition: str = "Available"
     timeout: int = 300
+
+
+# The inventory CSVs every scenario's archive holds (real cAdvisor feeds the container files from system pods); a scenario's ``files`` adds what its workload produces.
+BASE_FILES = frozenset(
+    {
+        "cluster/attributes.csv",
+        "cluster/config.csv",
+        "cluster/cpu_requests.csv",
+        "cluster/cpu_reservation_percent.csv",
+        "cluster/memory_requests.csv",
+        "cluster/memory_reservation_percent.csv",
+        "container/attributes.csv",
+        "container/avg_cpu_mcores_workload.csv",
+        "container/avg_cpu_throttling_percent_workload.csv",
+        "container/avg_mem_workload.csv",
+        "container/avg_rss_workload.csv",
+        "container/avg_ws_workload.csv",
+        "container/config.csv",
+        "container/cpu_limit.csv",
+        "container/cpu_request.csv",
+        "container/current_size.csv",
+        "container/max_cpu_mcores_workload.csv",
+        "container/max_cpu_throttling_percent_workload.csv",
+        "container/max_mem_workload.csv",
+        "container/max_restarts.csv",
+        "container/max_rss_workload.csv",
+        "container/max_ws_workload.csv",
+        "container/memory_limit.csv",
+        "container/memory_request.csv",
+        "container/sum_cpu_throttling_seconds_workload.csv",
+        "node/attributes.csv",
+        "node/config.csv",
+        "node/cpu_limit.csv",
+        "node/cpu_request.csv",
+        "node/cpu_reservation_percent.csv",
+        "node/memory_limit.csv",
+        "node/memory_request.csv",
+        "node/memory_reservation_percent.csv",
+        "node/pod_count.csv",
+        "node_group/attributes.csv",
+        "node_group/config.csv",
+        "node_group/cpu_requests.csv",
+        "node_group/cpu_reservation_percent.csv",
+        "node_group/current_size.csv",
+        "node_group/memory_requests.csv",
+        "node_group/memory_reservation_percent.csv",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -272,9 +290,8 @@ class ScenarioSpec:
     lifecycle: Sequence[Wait] = ()
     # kubectl resource names captured in every snapshot besides nodes and pods
     snapshot_resources: Sequence[str] = ()
-    archive_prefix: str | None = None
-    # Every inventory CSV the archive must hold, as "populated" or "header-only"; any other inventory CSV fails.
-    files: Mapping[str, Literal["populated", "header-only"]] = field(default_factory=dict)
+    # Every inventory CSV the archive must hold, non-empty; any other inventory CSV fails.
+    files: frozenset[str] = frozenset()
 
     def __post_init__(self) -> None:
         if not re.fullmatch(r"[a-z0-9]([-a-z0-9]*[a-z0-9])?", self.name):
@@ -286,4 +303,4 @@ class ScenarioSpec:
 
     @property
     def prefix(self) -> str:
-        return self.archive_prefix if self.archive_prefix is not None else f"data/{self.name}"
+        return f"data/{self.name}"

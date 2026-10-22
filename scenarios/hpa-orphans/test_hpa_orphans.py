@@ -14,13 +14,13 @@ metrics the controller never rescales the targets, so every value here is stable
 from __future__ import annotations
 
 from collections import Counter
-from pathlib import Path
 
 import pytest
 
 from harness.archive import expected_timestamps, label_map, prometheus_labels
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.spec import (
+    BASE_FILES,
     ClusterSpec,
     Collection,
     ForwarderSpec,
@@ -32,7 +32,6 @@ from harness.spec import (
     Wait,
 )
 
-HERE = Path(__file__).parent
 NAME = "hpa-orphans"
 NAMESPACE = "hpa-orphans-workload"
 GROUP_LABEL = "topology.kubex.ai/node-group"
@@ -71,53 +70,6 @@ SERIES_FILES = [(f"container/hpa_{s}.csv", s, CLASSIFIED) for s in HPA_SERIES] +
 HPA_FILES = [path for path, _, _ in SERIES_FILES] + ["hpa/hpa_extra_config.csv", "hpa/hpa_extra_attributes.csv"]
 assert len(HPA_FILES) == 16
 
-# Same files as node-pressure produces; real cAdvisor is on, so the container usage files come from system pods
-BASE_FILES = dict.fromkeys(
-    (
-        "cluster/attributes.csv",
-        "cluster/config.csv",
-        "cluster/cpu_requests.csv",
-        "cluster/cpu_reservation_percent.csv",
-        "cluster/memory_requests.csv",
-        "cluster/memory_reservation_percent.csv",
-        "container/attributes.csv",
-        "container/avg_cpu_mcores_workload.csv",
-        "container/avg_cpu_throttling_percent_workload.csv",
-        "container/avg_mem_workload.csv",
-        "container/avg_rss_workload.csv",
-        "container/avg_ws_workload.csv",
-        "container/config.csv",
-        "container/cpu_limit.csv",
-        "container/cpu_request.csv",
-        "container/current_size.csv",
-        "container/max_cpu_mcores_workload.csv",
-        "container/max_cpu_throttling_percent_workload.csv",
-        "container/max_mem_workload.csv",
-        "container/max_restarts.csv",
-        "container/max_rss_workload.csv",
-        "container/max_ws_workload.csv",
-        "container/memory_limit.csv",
-        "container/memory_request.csv",
-        "container/sum_cpu_throttling_seconds_workload.csv",
-        "node/attributes.csv",
-        "node/config.csv",
-        "node/cpu_limit.csv",
-        "node/cpu_request.csv",
-        "node/cpu_reservation_percent.csv",
-        "node/memory_limit.csv",
-        "node/memory_request.csv",
-        "node/memory_reservation_percent.csv",
-        "node/pod_count.csv",
-        "node_group/attributes.csv",
-        "node_group/config.csv",
-        "node_group/cpu_requests.csv",
-        "node_group/cpu_reservation_percent.csv",
-        "node_group/current_size.csv",
-        "node_group/memory_requests.csv",
-        "node_group/memory_reservation_percent.csv",
-    ),
-    "populated",
-)
 
 SCENARIO = ScenarioSpec(
     name=NAME,
@@ -166,21 +118,14 @@ SCENARIO = ScenarioSpec(
         ],
     ),
     forwarder=ForwarderSpec(
-        job_name="hpa-orphans-forwarder",
         # history=2 reads [AuditTime-2m, AuditTime-1m]; the HPA series must exist from well before that
         window_seconds=240,
         collection=Collection(interval="minutes", interval_size=1, history=2, sample_rate=1),
     ),
-    files={**BASE_FILES, **dict.fromkeys(HPA_FILES, "populated")},
+    files=BASE_FILES | frozenset(HPA_FILES),
 )
 
 pytestmark = pytest.mark.pr
-
-
-@pytest.fixture(scope="session")
-def run(stack_run):
-    with stack_run(SCENARIO, HERE) as active:
-        yield active
 
 
 def _identity(hpa):

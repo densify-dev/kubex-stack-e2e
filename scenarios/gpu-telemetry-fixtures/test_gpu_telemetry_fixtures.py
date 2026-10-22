@@ -18,13 +18,13 @@ from __future__ import annotations
 
 import statistics
 from collections import namedtuple
-from pathlib import Path
 
 import pytest
 
 from harness.archive import assert_metric_grid, expected_timestamps, row_label
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.spec import (
+    BASE_FILES,
     CLUSTER_NAME_PREFIX,
     ClusterSpec,
     Collection,
@@ -38,7 +38,6 @@ from harness.spec import (
     StackSpec,
 )
 
-HERE = Path(__file__).parent
 NAME = "gpu-telemetry-fixtures"
 NAMESPACE = "gtf-workload"
 GROUP_LABEL = "topology.kubex.ai/node-group"
@@ -199,50 +198,6 @@ assert _values("infer", "serve", max) == pytest.approx(
     {"gpu_utilization": 75, "gpu_utilization_gpus": 0.375, "gpu_mem_utilization": 25.0, "gpu_mem_used": 10240}
 )
 
-# Same files as node-pressure produces
-BASE_FILES = (
-    "cluster/attributes.csv",
-    "cluster/config.csv",
-    "cluster/cpu_requests.csv",
-    "cluster/cpu_reservation_percent.csv",
-    "cluster/memory_requests.csv",
-    "cluster/memory_reservation_percent.csv",
-    "container/attributes.csv",
-    "container/avg_cpu_mcores_workload.csv",
-    "container/avg_cpu_throttling_percent_workload.csv",
-    "container/avg_mem_workload.csv",
-    "container/avg_rss_workload.csv",
-    "container/avg_ws_workload.csv",
-    "container/config.csv",
-    "container/cpu_limit.csv",
-    "container/cpu_request.csv",
-    "container/current_size.csv",
-    "container/max_cpu_mcores_workload.csv",
-    "container/max_cpu_throttling_percent_workload.csv",
-    "container/max_mem_workload.csv",
-    "container/max_restarts.csv",
-    "container/max_rss_workload.csv",
-    "container/max_ws_workload.csv",
-    "container/memory_limit.csv",
-    "container/memory_request.csv",
-    "container/sum_cpu_throttling_seconds_workload.csv",
-    "node/attributes.csv",
-    "node/config.csv",
-    "node/cpu_limit.csv",
-    "node/cpu_request.csv",
-    "node/cpu_reservation_percent.csv",
-    "node/memory_limit.csv",
-    "node/memory_request.csv",
-    "node/memory_reservation_percent.csv",
-    "node/pod_count.csv",
-    "node_group/attributes.csv",
-    "node_group/config.csv",
-    "node_group/cpu_requests.csv",
-    "node_group/cpu_reservation_percent.csv",
-    "node_group/current_size.csv",
-    "node_group/memory_requests.csv",
-    "node_group/memory_reservation_percent.csv",
-)
 # The node and node group files come from the DCGM fixture; their identity and values are asserted here for the
 # no-Hostname case (gpu-device-plugin asserts them with a Hostname).
 GPU_FILES = (
@@ -258,7 +213,7 @@ GPU_FILES = (
     "node_group/gpu_mem_used_avg.csv",
     "node_group/gpu_power_usage_avg.csv",
 )
-assert len(BASE_FILES) == 41 and len(GPU_FILES) == 18
+assert len(GPU_FILES) == 18
 
 SCENARIO = ScenarioSpec(
     name=NAME,
@@ -311,22 +266,15 @@ SCENARIO = ScenarioSpec(
         ],
     ),
     forwarder=ForwarderSpec(
-        job_name="gpu-telemetry-fixtures-forwarder",
         # rate(...[1m20s]) inside a [1m:20s] subquery at AuditTime-60s needs samples from AuditTime-180s
         window_seconds=240,
         collection=Collection(interval="minutes", interval_size=1, history=1, sample_rate=1),
     ),
     # No lifecycle Wait: the StatefulSet pods may not exist yet when kubectl wait runs; the queries wait instead.
-    files=dict.fromkeys((*BASE_FILES, *GPU_FILES), "populated"),
+    files=BASE_FILES | frozenset(GPU_FILES),
 )
 
 pytestmark = pytest.mark.pr
-
-
-@pytest.fixture(scope="session")
-def run(stack_run):
-    with stack_run(SCENARIO, HERE) as active:
-        yield active
 
 
 # --- archive helpers ----------------------------------------------------------

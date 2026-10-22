@@ -1,16 +1,14 @@
 """Shared pytest fixtures wiring the harness.
 
-A scenario module declares a session-scoped ``run`` fixture built from
-``stack_run``; ``archive`` and ``oracle`` here derive from whatever ``run`` that
-module defines. Cluster lifecycle lives entirely in the harness — scenario
-modules never provision anything at import time.
+A scenario module declares ``SCENARIO``; the module-scoped ``run`` fixture here provisions (or replays)
+it, and ``archive`` and ``oracle`` derive from that run. Cluster lifecycle lives entirely in the
+harness: scenario modules never provision anything at import time.
 """
 
 from __future__ import annotations
 
 import json
 import os
-from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
@@ -20,7 +18,6 @@ from harness.archive import Archive
 from harness.artifacts import failure_digest
 from harness.oracle import Oracle
 from harness.run import Run, execute, replay
-from harness.spec import ScenarioSpec
 
 REPO_ROOT = Path(__file__).parent.resolve()
 
@@ -104,40 +101,31 @@ def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "release: full tier")
 
 
-@pytest.fixture(scope="session")
-def repo_root() -> Path:
-    return REPO_ROOT
+@pytest.fixture(scope="module")
+def run(request: pytest.FixtureRequest, pytestconfig: pytest.Config) -> Iterator[Run]:
+    """The provisioned (or replayed) run of the module's ``SCENARIO``. One cluster per scenario module."""
+
+    scenario = request.module.SCENARIO
+    if replay_dir := pytestconfig.getoption("replay"):
+        yield replay(scenario, Path(replay_dir).resolve())
+        return
+    with execute(
+        scenario,
+        Path(request.module.__file__).parent,
+        REPO_ROOT,
+        (REPO_ROOT / str(pytestconfig.getoption("artifacts_root"))).resolve(),
+        pytestconfig.getoption("stack_chart_version"),
+        pytestconfig.getoption("collector_image") or None,
+        bool(pytestconfig.getoption("keep_cluster")),
+    ) as active:
+        yield active
 
 
-@pytest.fixture(scope="session")
-def stack_run(pytestconfig: pytest.Config, repo_root: Path, tmp_path_factory: pytest.TempPathFactory):
-    """Factory yielding a provisioned :class:`Run` for a scenario spec."""
-
-    artifacts_root = (repo_root / str(pytestconfig.getoption("artifacts_root"))).resolve()
-    chart_version = pytestconfig.getoption("stack_chart_version")
-    collector_image = pytestconfig.getoption("collector_image") or None
-    keep_cluster = bool(pytestconfig.getoption("keep_cluster"))
-    replay_dir = pytestconfig.getoption("replay")
-
-    @contextmanager
-    def _run(scenario: ScenarioSpec, scenario_dir: Path) -> Iterator[Run]:
-        if replay_dir:
-            active = replay(scenario, Path(replay_dir).resolve(), tmp_path_factory.mktemp("replay"))
-            yield active
-        else:
-            with execute(
-                scenario, scenario_dir, repo_root, artifacts_root, chart_version, collector_image, keep_cluster
-            ) as active:
-                yield active
-
-    return _run
-
-
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def archive(run: Run) -> Archive:
     return run.archive
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="module")
 def oracle(run: Run) -> Oracle:
     return run.oracle

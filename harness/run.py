@@ -42,7 +42,6 @@ class Run:
     scenario: ScenarioSpec
     archive: Archive
     oracle: Oracle
-    artifacts: Path
     uploads: int
     job_name: str | None = None
     snapshots: list[Snapshot] = field(default_factory=list)
@@ -65,11 +64,10 @@ def _write_replay_inputs(artifacts: Path, run: Run) -> None:
     )
 
 
-def replay(scenario: ScenarioSpec, directory: Path, artifacts: Path) -> Run:
+def replay(scenario: ScenarioSpec, directory: Path) -> Run:
     """Rebuild a Run from a previous run's artifact directory without touching a cluster.
 
-    Read-only on ``directory``. Nothing is written (no summary, no versions.json);
-    ``artifacts`` is a scratch directory for tests that want to write files.
+    Read-only on ``directory``: nothing is written (no summary, no versions.json).
     """
 
     try:
@@ -82,7 +80,6 @@ def replay(scenario: ScenarioSpec, directory: Path, artifacts: Path) -> Run:
         scenario=scenario,
         archive=load_directory(directory / "extracted-csv"),
         oracle=Oracle(snapshots=snapshots),
-        artifacts=artifacts,
         uploads=meta["uploads"],
         job_name=meta["job_name"],
         snapshots=snapshots,
@@ -102,7 +99,7 @@ def _await_window(scenario: ScenarioSpec, repo_root: Path) -> list[Snapshot]:
     drift — a change that appears and reverts between two snapshots is invisible.
     """
 
-    total = scenario.forwarder.window()
+    total = scenario.forwarder.window_seconds
     snapshots = [_snapshot(scenario, "collection window start", repo_root)]
     remaining = total
     elapsed = 0.0
@@ -159,7 +156,7 @@ def execute(
         # Once absence is established, cleanup owns any partial Kind creation.
         cluster.assert_absent(cluster_name, repo_root)
         created = True
-        cluster.create(scenario.cluster, cluster_name, config_path, repo_root)
+        cluster.create(cluster_name, config_path, repo_root)
         cluster.configure_nodes(scenario.cluster, cluster_name, repo_root)
 
         receiver.deploy(repo_root)
@@ -191,7 +188,6 @@ def execute(
             scenario=scenario,
             archive=archive,
             oracle=oracle,
-            artifacts=artifacts,
             uploads=uploads,
             job_name=job_name,
             snapshots=snapshots,

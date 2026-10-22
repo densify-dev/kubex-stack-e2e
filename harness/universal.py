@@ -40,11 +40,7 @@ def test_expected_files(run):
     expected = run.scenario.files
     assert expected, f"scenario {run.scenario.name} declares no expected files"
     present = {p for p in run.archive.paths if p in INVENTORY}
-    missing, unexpected = sorted(expected.keys() - present), sorted(present - expected.keys())
+    missing, unexpected = sorted(expected - present), sorted(present - expected)
     assert not missing and not unexpected, f"archive files differ: missing {missing}, unexpected {unexpected}"
-    wrong = {
-        path: f"{len(run.archive.csv(path))} rows, expected {state}"
-        for path, state in expected.items()
-        if (len(run.archive.csv(path)) > 0) != (state == "populated")
-    }
-    assert not wrong, f"file states differ: {wrong}"
+    empty = sorted(path for path in expected if not len(run.archive.csv(path)))
+    assert not empty, f"files without rows: {empty}"

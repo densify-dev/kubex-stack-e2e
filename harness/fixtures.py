@@ -19,7 +19,7 @@ SERVER_CONFIGMAP = "stack-e2e-metric-fixture-server"
 
 
 def _deployment(service: FixtureService, namespace: str) -> str:
-    port = service.container_port
+    port = service.port
     return yaml.safe_dump(
         {
             "apiVersion": "apps/v1",
@@ -78,8 +78,6 @@ def _service(service: FixtureService, namespace: str) -> str:
     metadata: dict[str, object] = {"name": service.name, "namespace": namespace}
     if service.labels:
         metadata["labels"] = dict(service.labels)
-    if service.annotations:
-        metadata["annotations"] = dict(service.annotations)
     return yaml.safe_dump(
         {
             "apiVersion": "v1",
@@ -90,7 +88,7 @@ def _service(service: FixtureService, namespace: str) -> str:
                 # kubernetes-service-endpoints pool can discover the target.
                 "selector": {"app.kubex.ai/fixture": service.name},
                 "ports": [
-                    {"name": "metrics", "port": service.port, "targetPort": service.container_port}
+                    {"name": "metrics", "port": service.port, "targetPort": service.port}
                 ],
             },
         },

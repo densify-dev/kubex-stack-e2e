@@ -12,7 +12,6 @@ so the collector maps each series to a node through the exporter pod's IP (inter
 from __future__ import annotations
 
 import statistics
-from pathlib import Path
 
 import pytest
 import yaml
@@ -25,6 +24,7 @@ from harness.archive import (
 )
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.spec import (
+    BASE_FILES,
     CLUSTER_NAME_PREFIX,
     ClusterSpec,
     Collection,
@@ -39,7 +39,6 @@ from harness.spec import (
     Wait,
 )
 
-HERE = Path(__file__).parent
 NODE_GROUP = {"topology.kubex.ai/node-group": "mvp-workers"}
 WORKLOAD_NAMESPACE = "nodegroup-labels-workload"
 
@@ -190,7 +189,6 @@ SCENARIO = ScenarioSpec(
         ],
     ),
     forwarder=ForwarderSpec(
-        job_name="nodegroup-labels-forwarder",
         window_seconds=180,
         collection=Collection(interval="minutes", interval_size=1, history=1, sample_rate=1),
     ),
@@ -198,50 +196,7 @@ SCENARIO = ScenarioSpec(
     lifecycle=[
         Wait(kind="deployment", name="mvp-workload", namespace=WORKLOAD_NAMESPACE, timeout=300)
     ],
-    files={
-        "cluster/attributes.csv": "populated",
-        "cluster/config.csv": "populated",
-        "cluster/cpu_requests.csv": "populated",
-        "cluster/cpu_reservation_percent.csv": "populated",
-        "cluster/memory_requests.csv": "populated",
-        "cluster/memory_reservation_percent.csv": "populated",
-        "container/attributes.csv": "populated",
-        "container/avg_cpu_mcores_workload.csv": "populated",
-        "container/avg_cpu_throttling_percent_workload.csv": "populated",
-        "container/avg_mem_workload.csv": "populated",
-        "container/avg_rss_workload.csv": "populated",
-        "container/avg_ws_workload.csv": "populated",
-        "container/config.csv": "populated",
-        "container/cpu_limit.csv": "populated",
-        "container/cpu_request.csv": "populated",
-        "container/current_size.csv": "populated",
-        "container/max_cpu_mcores_workload.csv": "populated",
-        "container/max_cpu_throttling_percent_workload.csv": "populated",
-        "container/max_mem_workload.csv": "populated",
-        "container/max_restarts.csv": "populated",
-        "container/max_rss_workload.csv": "populated",
-        "container/max_ws_workload.csv": "populated",
-        "container/memory_limit.csv": "populated",
-        "container/memory_request.csv": "populated",
-        "container/sum_cpu_throttling_seconds_workload.csv": "populated",
-        "node/attributes.csv": "populated",
-        "node/config.csv": "populated",
-        "node/cpu_limit.csv": "populated",
-        "node/cpu_request.csv": "populated",
-        "node/cpu_reservation_percent.csv": "populated",
-        "node/memory_limit.csv": "populated",
-        "node/memory_request.csv": "populated",
-        "node/memory_reservation_percent.csv": "populated",
-        "node/pod_count.csv": "populated",
-        "node_group/attributes.csv": "populated",
-        "node_group/config.csv": "populated",
-        "node_group/cpu_requests.csv": "populated",
-        "node_group/cpu_reservation_percent.csv": "populated",
-        "node_group/current_size.csv": "populated",
-        "node_group/memory_requests.csv": "populated",
-        "node_group/memory_reservation_percent.csv": "populated",
-        **dict.fromkeys(EXPORTER_FILES, "populated"),
-    },
+    files=BASE_FILES | frozenset(EXPORTER_FILES),
 )
 
 TIME_SERIES = [
@@ -307,12 +262,6 @@ HAND = {
 assert {path: list(expected.values()) for path, _, _, expected, _ in CASES} == {p: pytest.approx(v, abs=1e-6) for p, v in HAND.items()}
 
 pytestmark = pytest.mark.pr
-
-
-@pytest.fixture(scope="session")
-def run(stack_run):
-    with stack_run(SCENARIO, HERE) as active:
-        yield active
 
 
 # --- archive shape -----------------------------------------------------------

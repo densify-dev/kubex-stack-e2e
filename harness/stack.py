@@ -21,6 +21,9 @@ from harness.receiver import UPLOAD_PORT
 from harness.spec import ForwarderSpec, ScenarioSpec, StackSpec
 
 UPLOAD_HOST = "fake.kubex.ai"
+CHART = "kubex/kubex-automation-stack"
+REPOSITORY = "https://densify-dev.github.io/helm-charts"
+RELEASE_NAME = "kubex"
 _FORWARDER = "container-optimization-data-forwarder"
 _STABLE_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -124,10 +127,9 @@ def template_args(
 ) -> list[str]:
     """``helm template`` args. ``collector_image`` is the preloaded local tag, never pulled."""
 
-    version = chart_version or stack.version
-    args = ["helm", "template", stack.release_name, stack.chart, "--namespace", stack.namespace]
-    if version:
-        args.extend(["--version", version])
+    args = ["helm", "template", RELEASE_NAME, CHART, "--namespace", stack.namespace]
+    if chart_version:
+        args.extend(["--version", chart_version])
     collection = forwarder.collection
     defaults: dict[str, object] = {
         "stack.densify.createSecret": False,
@@ -155,10 +157,10 @@ def template_args(
     }
     overrides = dict(stack.helm_overrides)
     supplied = {key for key, _ in flatten_values(overrides)}
-    # The collector under test is chosen only via --collector-image / StackSpec.collector_image.
+    # The collector under test is chosen only via --collector-image.
     reserved = {f"{_FORWARDER}.image", f"{_FORWARDER}.images.dataCollection.pullPolicy"}
     if supplied & reserved:
-        raise HarnessError(f"helm_overrides must not set {sorted(supplied & reserved)}; use StackSpec.collector_image")
+        raise HarnessError(f"helm_overrides must not set {sorted(supplied & reserved)}; use --collector-image")
     if collector_image:
         defaults[f"{_FORWARDER}.image"] = collector_image
         defaults[f"{_FORWARDER}.images.dataCollection.pullPolicy"] = "Never"
@@ -192,11 +194,9 @@ def install(
     from scripts.inject_host_aliases import inject
 
     stack = scenario.stack
-    chart = stack.chart
-    alias = chart.split("/", 1)[0] if "/" in chart and not chart.startswith(("oci://", "http://", "https://")) else "kubex"
-    run(["helm", "repo", "add", alias, stack.repository, "--force-update"], cwd=repo_root)
+    run(["helm", "repo", "add", CHART.split("/")[0], REPOSITORY, "--force-update"], cwd=repo_root)
     run(["helm", "repo", "update"], cwd=repo_root)
-    version = chart_version or stack.version or resolve_chart_version(stack.chart, repo_root)
+    version = chart_version or resolve_chart_version(CHART, repo_root)
     versions["chart_version"] = version
 
     def render(image: str | None = None) -> str:
@@ -206,7 +206,7 @@ def install(
     # The default render finds the CronJob (its image still names the forwarder)
     # and the chart's default collector image. The final render swaps in the local tag.
     cronjob, default_image = find_forwarder(render())
-    requested = collector_image or stack.collector_image or default_image
+    requested = collector_image or default_image
     versions["collector_image_requested"] = requested
     local = preload_collector(requested, scenario.cluster_name, repo_root, versions)
 
@@ -255,28 +255,22 @@ def await_lifecycle(scenario: ScenarioSpec, repo_root: Path) -> None:
         kubectl(args, repo_root)
 
 
-def trigger_forwarder(scenario: ScenarioSpec, repo_root: Path, discovered_cronjob: str) -> str:
-    """Create a Job from the forwarder CronJob and wait for it to succeed."""
+def trigger_forwarder(scenario: ScenarioSpec, repo_root: Path, cronjob: str) -> str:
+    """Create a Job from the forwarder CronJob and wait for it to complete."""
 
-    forwarder = scenario.forwarder
     namespace = scenario.stack.namespace
-    release = scenario.stack.release_name
-    cronjob = forwarder.cronjob_name or discovered_cronjob
-    job = forwarder.job_name or f"{release}-{scenario.name}-forwarder"
-    if len(job) > 63:
-        job = job[:63].rstrip("-")
+    job = f"{scenario.name}-forwarder"
     kubectl(["create", "job", job, f"--from=cronjob/{cronjob}", "-n", namespace], repo_root)
-    deadline = time.monotonic() + forwarder.wait_timeout
+    deadline = time.monotonic() + 900
     while time.monotonic() < deadline:
         try:
             status = json.loads(kubectl(["get", "job", job, "-n", namespace, "-o", "json"], repo_root))
-            state = status.get("status", {})
-            if state.get("succeeded", 0) > 0:
-                return job
-            if state.get("failed", 0) >= 5:
-                raise HarnessError(f"forwarder Job {job} failed")
-        except (json.JSONDecodeError, HarnessError) as exc:
-            if isinstance(exc, HarnessError) and "command failed" not in str(exc):
-                raise
-        time.sleep(forwarder.poll_interval)
+        except (HarnessError, json.JSONDecodeError):
+            status = {}  # a transient API error: poll again
+        done = {c["type"] for c in status.get("status", {}).get("conditions", []) if c["status"] == "True"}
+        if "Complete" in done:
+            return job
+        if "Failed" in done:
+            raise HarnessError(f"forwarder Job {job} failed")
+        time.sleep(5)
     raise HarnessError(f"timed out waiting for forwarder Job {job}")

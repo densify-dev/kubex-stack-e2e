@@ -10,7 +10,6 @@ out are served too, with rates far above the real ones, so a missing filter chan
 from __future__ import annotations
 
 import statistics
-from pathlib import Path
 
 import pytest
 
@@ -18,6 +17,7 @@ from harness.archive import assert_metric_grid, expected_timestamps
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.oracle import quantity
 from harness.spec import (
+    BASE_FILES,
     CLUSTER_NAME_PREFIX,
     ClusterSpec,
     Collection,
@@ -31,7 +31,6 @@ from harness.spec import (
     StackSpec,
 )
 
-HERE = Path(__file__).parent
 NAME = "node-exporter"
 GROUP_LABEL = "topology.kubex.ai/node-group"
 GROUP = "ne-workers"
@@ -225,70 +224,14 @@ SCENARIO = ScenarioSpec(
         ],
     ),
     forwarder=ForwarderSpec(
-        job_name="node-exporter-forwarder",
         # the collector queries increase(...[1m20s]), which needs samples from 80s before the first grid point
         window_seconds=240,
         collection=Collection(interval="minutes", interval_size=1, history=1, sample_rate=1),
     ),
-    files={
-        # Same files as node-pressure produces: container files come from system pods
-        **dict.fromkeys(
-            (
-                "cluster/attributes.csv",
-                "cluster/config.csv",
-                "cluster/cpu_requests.csv",
-                "cluster/cpu_reservation_percent.csv",
-                "cluster/memory_requests.csv",
-                "cluster/memory_reservation_percent.csv",
-                "container/attributes.csv",
-                "container/avg_cpu_mcores_workload.csv",
-                "container/avg_cpu_throttling_percent_workload.csv",
-                "container/avg_mem_workload.csv",
-                "container/avg_rss_workload.csv",
-                "container/avg_ws_workload.csv",
-                "container/config.csv",
-                "container/cpu_limit.csv",
-                "container/cpu_request.csv",
-                "container/current_size.csv",
-                "container/max_cpu_mcores_workload.csv",
-                "container/max_cpu_throttling_percent_workload.csv",
-                "container/max_mem_workload.csv",
-                "container/max_restarts.csv",
-                "container/max_rss_workload.csv",
-                "container/max_ws_workload.csv",
-                "container/memory_limit.csv",
-                "container/memory_request.csv",
-                "container/sum_cpu_throttling_seconds_workload.csv",
-                "node/attributes.csv",
-                "node/config.csv",
-                "node/cpu_limit.csv",
-                "node/cpu_request.csv",
-                "node/cpu_reservation_percent.csv",
-                "node/memory_limit.csv",
-                "node/memory_request.csv",
-                "node/memory_reservation_percent.csv",
-                "node/pod_count.csv",
-                "node_group/attributes.csv",
-                "node_group/config.csv",
-                "node_group/cpu_requests.csv",
-                "node_group/cpu_reservation_percent.csv",
-                "node_group/current_size.csv",
-                "node_group/memory_requests.csv",
-                "node_group/memory_reservation_percent.csv",
-            ),
-            "populated",
-        ),
-        **dict.fromkeys(EXPORTER_FILES, "populated"),
-    },
+    files=BASE_FILES | frozenset(EXPORTER_FILES),
 )
 
 pytestmark = pytest.mark.pr
-
-
-@pytest.fixture(scope="session")
-def run(stack_run):
-    with stack_run(SCENARIO, HERE) as active:
-        yield active
 
 
 def _grid(archive):

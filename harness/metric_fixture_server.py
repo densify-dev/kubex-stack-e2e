@@ -5,9 +5,8 @@ This file is mounted into the fixture pod on its own, alongside a JSON fixture
 the harness generated from typed ``Metric`` objects. It must therefore import
 nothing outside the standard library and must never need PyYAML.
 
-The harness has already validated the fixture through the dataclasses, but the
-checks here stay: a malformed fixture should fail loudly at pod start rather
-than silently serve nothing eight minutes into a run.
+The harness validates and normalizes the fixture before it reaches the pod
+(``validate_fixture_document``), so the pod only loads it.
 """
 
 from __future__ import annotations
@@ -30,17 +29,6 @@ LABEL_NAME = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 class FixtureError(ValueError):
     """Raised for malformed metric fixture input."""
-
-
-def _load_document(path: Path) -> object:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        raise FixtureError(f"{path}: cannot read fixture: {exc}") from exc
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise FixtureError(f"{path}: fixture must be JSON: {exc}") from exc
 
 
 def _mapping(value: object, where: str, allowed: set[str]) -> dict[str, Any]:
@@ -132,7 +120,7 @@ def validate_fixture_document(document: object, source: str = "fixture") -> list
 
 
 def load_fixture(path: Path) -> list[dict[str, Any]]:
-    return validate_fixture_document(_load_document(path), str(path))
+    return json.loads(path.read_text(encoding="utf-8"))["metrics"]
 
 
 def _escape_help(value: str) -> str:
@@ -147,16 +135,11 @@ def render_metrics(metrics: list[dict[str, Any]], elapsed: float) -> str:
     """Render valid Prometheus text for normalized metrics."""
 
     lines: list[str] = []
-    seen_samples: set[tuple[str, tuple[tuple[str, str], ...]]] = set()
     emitted_definitions: set[str] = set()
     for metric in metrics:
         name = metric["name"]
         labels = metric["labels"]
         label_items = tuple(sorted(labels.items()))
-        identity = (name, label_items)
-        if identity in seen_samples:
-            raise FixtureError(f"duplicate metric sample {name}{labels}")
-        seen_samples.add(identity)
         if name not in emitted_definitions:
             lines.append(f"# HELP {name} {_escape_help(metric['help'])}")
             lines.append(f"# TYPE {name} {metric['type']}")
@@ -187,10 +170,7 @@ class _Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self) -> None:  # noqa: N802
-        path = urlparse(self.path).path
-        if path == "/healthz":
-            self._send(HTTPStatus.OK, b"ok\n", "text/plain; charset=utf-8")
-        elif path == "/metrics":
+        if urlparse(self.path).path == "/metrics":
             with self.fixture_server.lock:
                 elapsed = time.monotonic() - self.fixture_server.started_at
                 body = render_metrics(self.fixture_server.metrics, elapsed).encode("utf-8")
@@ -215,11 +195,7 @@ def main() -> int:
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=9100)
     args = parser.parse_args()
-    try:
-        metrics = load_fixture(args.fixture)
-    except FixtureError as exc:
-        parser.error(str(exc))
-    server = FixtureServer((args.host, args.port), metrics)
+    server = FixtureServer((args.host, args.port), load_fixture(args.fixture))
     try:
         server.serve_forever()
     except KeyboardInterrupt:

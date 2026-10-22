@@ -64,13 +64,12 @@ from harness.spec import (
 )
 from harness import stack as stack_mod
 from harness.stack import find_forwarder, resource_paths, template_args
-from harness.versions import COLLECTOR_IMAGE, FIXTURE_IMAGE, KIND_NODE_IMAGE, STACK_CHART_VERSION
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class FixtureServerTest(unittest.TestCase):
-    def test_health_metrics_escaping_and_elapsed_counter(self) -> None:
+    def test_metrics_escaping_and_elapsed_counter(self) -> None:
         metrics = validate_fixture_document(
             {
                 "metrics": [
@@ -98,8 +97,6 @@ class FixtureServerTest(unittest.TestCase):
         thread.start()
         try:
             base = f"http://127.0.0.1:{server.server_port}"
-            with urllib.request.urlopen(base + "/healthz") as response:
-                self.assertEqual(response.status, 200)
             with urllib.request.urlopen(base + "/metrics") as response:
                 self.assertIn(b"# TYPE fixture_counter counter", response.read())
         finally:
@@ -114,15 +111,6 @@ class FixtureServerTest(unittest.TestCase):
     def test_normalized_fixture_is_valid_input(self) -> None:
         metrics = validate_fixture_document({"metrics": [{"name": "gauge", "type": "gauge", "value": 1}]})
         self.assertEqual(validate_fixture_document({"metrics": metrics}), metrics)
-
-    def test_deployment_uses_the_pinned_fixture_image(self) -> None:
-        service = FixtureService(
-            name="metrics",
-            metrics=[Metric(name="fixture_value", type="gauge")],
-        )
-        deployment = yaml.safe_load(_deployment(service, "fixtures"))
-        container = deployment["spec"]["template"]["spec"]["containers"][0]
-        self.assertEqual(container["image"], FIXTURE_IMAGE)
 
     def test_deployment_pins_the_fixture_to_its_node(self) -> None:
         metrics = [Metric(name="fixture_value", type="gauge")]
@@ -176,15 +164,6 @@ class FixtureServerTest(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual(json.loads(completed.stdout)[0]["name"], "pod_gauge")
-
-    def test_pod_fixture_must_be_json(self) -> None:
-        with tempfile.TemporaryDirectory() as directory:
-            path = Path(directory) / "fixture.yaml"
-            path.write_text("metrics:\n  - name: g\n", encoding="utf-8")
-            from harness.metric_fixture_server import load_fixture
-
-            with self.assertRaisesRegex(FixtureError, "must be JSON"):
-                load_fixture(path)
 
 
 class CommandAndReceiverTest(unittest.TestCase):
@@ -312,10 +291,7 @@ class CommandAndReceiverTest(unittest.TestCase):
 
 
 class HelmValuesTest(unittest.TestCase):
-    def test_node_image_is_pinned_and_chart_and_collector_default_to_latest(self) -> None:
-        self.assertEqual(ClusterSpec(workers=[Node()]).node_image, KIND_NODE_IMAGE)
-        self.assertIsNone(STACK_CHART_VERSION)
-        self.assertIsNone(COLLECTOR_IMAGE)
+    def test_chart_and_collector_default_to_latest(self) -> None:
         args = template_args("demo", StackSpec(), ForwarderSpec())
         self.assertNotIn("--version", args)
         self.assertFalse(any(a.startswith("container-optimization-data-forwarder.image") for a in args))
@@ -327,15 +303,10 @@ class HelmValuesTest(unittest.TestCase):
         self.assertIn("container-optimization-data-forwarder.image=kubex-e2e/collector:abc", args)
         self.assertIn("container-optimization-data-forwarder.images.dataCollection.pullPolicy=Never", args)
 
-    def test_chart_version_override_ignores_an_empty_value(self) -> None:
-        default_args = template_args("demo", StackSpec(version="1.0.0"), ForwarderSpec(), chart_version="")
-        self.assertIn("1.0.0", default_args)
-
-        override_args = template_args(
-            "demo", StackSpec(version="1.0.0"), ForwarderSpec(), chart_version="2.0.0"
-        )
-        self.assertIn("2.0.0", override_args)
-        self.assertNotIn("1.0.0", override_args)
+    def test_chart_version_is_passed_only_when_given(self) -> None:
+        self.assertNotIn("--version", template_args("demo", StackSpec(), ForwarderSpec(), chart_version=""))
+        args = template_args("demo", StackSpec(), ForwarderSpec(), chart_version="2.0.0")
+        self.assertEqual(args[args.index("--version") + 1], "2.0.0")
 
     def test_unused_subcharts_are_disabled_by_default_and_overridable(self) -> None:
         keys = ["kubex-connector", "kubex-ai-cdi", "kubex-automation-engine", "k8s-ephemeral-storage-metrics"]
@@ -351,7 +322,6 @@ class HelmValuesTest(unittest.TestCase):
 
     def test_overrides_escape_literal_segments_and_encode_lists_as_json(self) -> None:
         stack = StackSpec(
-            version="1.0.0",
             helm_overrides={
                 "prometheus": {
                     "server": {
@@ -465,7 +435,7 @@ class StackInstallTest(unittest.TestCase):
 
     def _scenario(self, **stack: object) -> ScenarioSpec:
         return ScenarioSpec(
-            name="demo", cluster=ClusterSpec(node_image="i", workers=[Node()]), stack=StackSpec(**stack)
+            name="demo", cluster=ClusterSpec(workers=[Node()]), stack=StackSpec(**stack)
         )
 
     def test_latest_stable_chart_is_resolved_and_always_passed(self) -> None:
@@ -493,15 +463,13 @@ class StackInstallTest(unittest.TestCase):
                 self._install(self._scenario())
 
     def test_explicit_chart_version_wins_over_search(self) -> None:
-        calls, versions, _ = self._install(self._scenario(version="1.1.9"), chart_version="1.1.10")
+        calls, versions, _ = self._install(self._scenario(), chart_version="1.1.10")
         self.assertFalse(any(c[:2] == ["helm", "search"] for c in calls))
         self.assertEqual(versions["chart_version"], "1.1.10")
 
-    def test_collector_image_override_beats_spec_beats_rendered_default(self) -> None:
-        _, versions, _ = self._install(self._scenario(collector_image="spec/img:1"), collector_image="over/img:2")
+    def test_collector_image_override_beats_rendered_default(self) -> None:
+        _, versions, _ = self._install(self._scenario(), collector_image="over/img:2")
         self.assertEqual(versions["collector_image_requested"], "over/img:2")
-        _, versions, _ = self._install(self._scenario(collector_image="spec/img:1"))
-        self.assertEqual(versions["collector_image_requested"], "spec/img:1")
         _, versions, _ = self._install(self._scenario())
         self.assertEqual(versions["collector_image_requested"], FORWARDER_IMAGE)
 
@@ -528,7 +496,7 @@ class StackInstallTest(unittest.TestCase):
             versions["chart_version"] = "1.1.24"
             raise HarnessError("preload failed")
 
-        scenario = ScenarioSpec(name="demo", cluster=ClusterSpec(node_image="i", workers=[Node()]))
+        scenario = ScenarioSpec(name="demo", cluster=ClusterSpec(workers=[Node()]))
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             with (
@@ -553,12 +521,31 @@ class StackInstallTest(unittest.TestCase):
         self.assertIn("| Collector | unknown |", summary)
 
 
+class TriggerForwarderTest(unittest.TestCase):
+    @staticmethod
+    def _job(*condition_types: str) -> str:
+        return json.dumps({"status": {"conditions": [{"type": t, "status": "True"} for t in condition_types]}})
+
+    def _trigger(self, *polls: str) -> str:
+        scenario = ScenarioSpec(name="demo", cluster=ClusterSpec(workers=[Node()]))
+        with patch.object(stack_mod, "kubectl", side_effect=["created", *polls]), patch.object(stack_mod.time, "sleep"):
+            return stack_mod.trigger_forwarder(scenario, Path("."), "kubex-stack")
+
+    def test_waits_for_the_job_to_complete(self) -> None:
+        # a pod failure inside the chart's backoff limit and a transient kubectl error do not end the wait
+        self.assertEqual(self._trigger(self._job(), "not json", self._job("Complete")), "demo-forwarder")
+
+    def test_a_failed_job_raises(self) -> None:
+        with self.assertRaisesRegex(HarnessError, "demo-forwarder failed"):
+            self._trigger(self._job(), self._job("Failed"))
+
+
 class SpecValidationTest(unittest.TestCase):
     """Setup objects are validated at construction, before any cluster exists."""
 
     def test_cluster_requires_a_worker(self) -> None:
         with self.assertRaisesRegex(SpecError, "at least one worker"):
-            ClusterSpec(node_image="kindest/node:v1.30.0")
+            ClusterSpec()
 
     def test_invalid_collection_interval_is_rejected(self) -> None:
         with self.assertRaisesRegex(SpecError, "invalid interval"):
@@ -574,7 +561,7 @@ class SpecValidationTest(unittest.TestCase):
 
     def test_metric_names_are_validated_before_provisioning(self) -> None:
         with self.assertRaisesRegex(SpecError, "invalid Prometheus metric name"):
-            Metric(name="bad-name", type="gauge")
+            FixtureService(name="f", metrics=[Metric(name="bad-name", type="gauge")])
 
     def test_fixture_ports_are_validated_before_provisioning(self) -> None:
         with self.assertRaisesRegex(SpecError, "port must be between"):
@@ -605,14 +592,10 @@ class SpecValidationTest(unittest.TestCase):
         with self.assertRaisesRegex(SpecError, "invalid Kubernetes name"):
             FixtureService(name="fixture", namespace="Bad Namespace", metrics=[metric])
 
-    def test_window_prefers_explicit_seconds_over_the_derived_value(self) -> None:
-        self.assertEqual(ForwarderSpec(collection=Collection(interval="hours")).window(), 3610)
-        self.assertEqual(ForwarderSpec(window_seconds=180, collection=Collection(interval="hours")).window(), 180)
-
     def test_cluster_name_and_node_names_are_deterministic(self) -> None:
         scenario = ScenarioSpec(
             name="demo",
-            cluster=ClusterSpec(node_image="i", control_planes=[Node()], workers=[Node(), Node()]),
+            cluster=ClusterSpec(control_planes=[Node()], workers=[Node(), Node()]),
         )
         self.assertEqual(scenario.cluster_name, "kubex-e2e-demo")
         self.assertEqual(
@@ -623,17 +606,17 @@ class SpecValidationTest(unittest.TestCase):
 
     def test_kubelet_configuration_renders_one_top_level_patch(self) -> None:
         configuration = {"crashLoopBackOff": {"maxContainerRestartPeriod": "1s"}}
-        rendered = yaml.safe_load(render_config(ClusterSpec(node_image="i", workers=[Node()], kubelet_configuration=configuration)))
+        rendered = yaml.safe_load(render_config(ClusterSpec(workers=[Node()], kubelet_configuration=configuration)))
         self.assertEqual(
             [yaml.safe_load(patch) for patch in rendered["kubeadmConfigPatches"]],
             [{"kind": "KubeletConfiguration", **configuration}],
         )
-        self.assertNotIn("kubeadmConfigPatches", yaml.safe_load(render_config(ClusterSpec(node_image="i", workers=[Node()]))))
+        self.assertNotIn("kubeadmConfigPatches", yaml.safe_load(render_config(ClusterSpec(workers=[Node()]))))
 
     def test_resource_paths_fail_before_cluster_work(self) -> None:
         scenario = ScenarioSpec(
             name="demo",
-            cluster=ClusterSpec(node_image="i", workers=[Node()]),
+            cluster=ClusterSpec(workers=[Node()]),
             resources=["missing.yaml"],
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -645,7 +628,7 @@ class ClusterLifecycleTest(unittest.TestCase):
     def test_existing_cluster_is_never_deleted(self) -> None:
         scenario = ScenarioSpec(
             name="demo",
-            cluster=ClusterSpec(node_image="i", workers=[Node()]),
+            cluster=ClusterSpec(workers=[Node()]),
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -670,7 +653,6 @@ class ClusterLifecycleTest(unittest.TestCase):
         scenario = ScenarioSpec(
             name="demo",
             cluster=ClusterSpec(
-                node_image="i",
                 workers=[Node(labels={"g": "x"}, extended_resources={"nvidia.com/gpu": "4"}), Node()],
             ),
         )
@@ -712,7 +694,7 @@ class ClusterLifecycleTest(unittest.TestCase):
     def test_partial_creation_is_cleaned_up(self) -> None:
         scenario = ScenarioSpec(
             name="demo",
-            cluster=ClusterSpec(node_image="i", workers=[Node()]),
+            cluster=ClusterSpec(workers=[Node()]),
         )
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

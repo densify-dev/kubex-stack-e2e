@@ -14,7 +14,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from harness import artifacts as artifacts_mod
-from harness import stack as stack_mod
 from harness import universal
 from harness.archive import (
     Archive,
@@ -153,22 +152,21 @@ class UniversalTest(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "differs from the coverage inventory"):
             universal.test_archive_matches_inventory(bad)
 
-    def test_expected_files_checks_presence_and_populated_state(self) -> None:
+    def test_expected_files_checks_presence_and_rows(self) -> None:
         header = ",".join(INVENTORY["node_group/current_size.csv"])
         archive = _archive({"node_group/current_size.csv": f"{header}\nc,g,t,1\n", "node_group/config.csv": "AuditTime\n"})
 
-        def check(files: dict[str, str]) -> None:
-            universal.test_expected_files(SimpleNamespace(scenario=SimpleNamespace(name="s", files=files), archive=archive))
+        def check(files: set[str]) -> None:
+            universal.test_expected_files(SimpleNamespace(scenario=SimpleNamespace(name="s", files=frozenset(files)), archive=archive))
 
-        check({"node_group/current_size.csv": "populated", "node_group/config.csv": "header-only"})
         with self.assertRaisesRegex(AssertionError, "unexpected.*config.csv"):
-            check({"node_group/current_size.csv": "populated"})
+            check({"node_group/current_size.csv"})
         with self.assertRaisesRegex(AssertionError, "missing.*node/config.csv"):
-            check({"node_group/current_size.csv": "populated", "node_group/config.csv": "header-only", "node/config.csv": "populated"})
-        with self.assertRaisesRegex(AssertionError, "file states differ"):
-            check({"node_group/current_size.csv": "header-only", "node_group/config.csv": "header-only"})
+            check({"node_group/current_size.csv", "node_group/config.csv", "node/config.csv"})
+        with self.assertRaisesRegex(AssertionError, "files without rows.*config.csv"):
+            check({"node_group/current_size.csv", "node_group/config.csv"})
         with self.assertRaisesRegex(AssertionError, "declares no expected files"):
-            check({})
+            check(set())
 
 
 NODES = [
@@ -182,7 +180,7 @@ PODS = [
         "status": {"phase": "Running"},
     }
 ]
-SCENARIO = ScenarioSpec(name="demo", cluster=ClusterSpec(node_image="i", workers=[Node()]))
+SCENARIO = ScenarioSpec(name="demo", cluster=ClusterSpec(workers=[Node()]))
 
 
 def _artifact_dir(root: Path, **overrides: str) -> Path:
@@ -225,7 +223,7 @@ class ReplayTest(unittest.TestCase):
         scratch = Path(tempfile.mkdtemp())
         self.addCleanup(shutil.rmtree, scratch, True)
         directory = _artifact_dir(scratch, **overrides)
-        return replay(SCENARIO, directory, scratch / "scratch"), directory
+        return replay(SCENARIO, directory), directory
 
     def test_run_is_rebuilt_without_a_cluster_and_tests_pass(self) -> None:
         run, _ = self._run()
@@ -234,16 +232,6 @@ class ReplayTest(unittest.TestCase):
         self.assertEqual(run.snapshots[0].nodes, NODES)
         _grid_test(run)
         _value_test(run)
-
-    def test_mutated_value_fails_a_value_test(self) -> None:
-        text = (
-            "ClusterName,NodeGroupName,MetricTime,CpuRequests\n"
-            f"c,g1,{T1},0.200000\nc,g1,{T2},0.900000\nc,g2,{T1},0.200000\nc,g2,{T2},0.200000\n"
-        )
-        run, _ = self._run(cpu_requests=text)
-        with self.assertRaises(AssertionError):
-            _value_test(run)
-        _grid_test(run)  # the grid is still intact
 
     def test_replay_never_writes_into_the_artifact_directory(self) -> None:
         run, directory = self._run()
@@ -255,16 +243,16 @@ class ReplayTest(unittest.TestCase):
     def test_directory_without_replay_inputs_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(HarnessError, "cannot read snapshots.json"):
-                replay(SCENARIO, Path(directory), Path(directory))
+                replay(SCENARIO, Path(directory))
 
     def test_replay_inputs_round_trip_into_a_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             snaps = [Snapshot("s", NODES, PODS, {"resourcequotas": [{"metadata": {"name": "q"}}]})]
-            live = Run(SCENARIO, Archive({}), Oracle(snaps), root, uploads=1, job_name="j", job_failures=3, snapshots=snaps)
+            live = Run(SCENARIO, Archive({}), Oracle(snaps), uploads=1, job_name="j", job_failures=3, snapshots=snaps)
             _write_replay_inputs(root, live)
             (root / "extracted-csv").mkdir()
-            again = replay(SCENARIO, root, root)
+            again = replay(SCENARIO, root)
         self.assertEqual((again.uploads, again.job_name, again.job_failures), (1, "j", 3))
         self.assertEqual(again.snapshots, snaps)
         self.assertEqual(again.snapshots[0].objects, snaps[0].objects)
@@ -273,7 +261,7 @@ class ReplayTest(unittest.TestCase):
     def test_live_snapshots_capture_the_scenario_resources(self) -> None:
         scenario = ScenarioSpec(
             name="demo",
-            cluster=ClusterSpec(node_image="i", workers=[Node()]),
+            cluster=ClusterSpec(workers=[Node()]),
             forwarder=ForwarderSpec(window_seconds=130),
             snapshot_resources=("resourcequotas",),
         )
@@ -310,11 +298,6 @@ class ReplayTest(unittest.TestCase):
 
 
 class StackAndSummaryTest(unittest.TestCase):
-    def test_job_failures_reads_status_failed(self) -> None:
-        for raw, expected in (("", 0), ("2", 2)):
-            with patch.object(stack_mod, "kubectl", return_value=raw):
-                self.assertEqual(stack_mod.job_failures("j", "ns", Path(".")), expected)
-
     def test_summary_has_a_coverage_warnings_section_only_when_given(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

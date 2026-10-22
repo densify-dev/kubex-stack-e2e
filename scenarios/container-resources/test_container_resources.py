@@ -13,7 +13,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timedelta
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 
@@ -21,6 +20,7 @@ from harness.archive import Csv, assert_metric_grid, expected_timestamps, label_
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.oracle import quantity
 from harness.spec import (
+    BASE_FILES,
     CLUSTER_NAME_PREFIX,
     ClusterSpec,
     Collection,
@@ -35,7 +35,6 @@ from harness.spec import (
     Wait,
 )
 
-HERE = Path(__file__).parent
 NAME = "container-resources"
 NAMESPACE = "cr-workload"
 CHURN = "cr-churn"
@@ -92,14 +91,6 @@ QUOTA_USED = {
     "limits.memory": 1472 * MIB,
     "pods": 9,
 }
-
-CONTAINER_FILES = (
-    "attributes", "config", "current_size", "cpu_limit", "cpu_request", "memory_limit", "memory_request",
-    "max_restarts", "avg_cpu_mcores_workload", "max_cpu_mcores_workload", "avg_cpu_throttling_percent_workload",
-    "max_cpu_throttling_percent_workload", "sum_cpu_throttling_seconds_workload", "avg_mem_workload",
-    "max_mem_workload", "avg_rss_workload", "max_rss_workload", "avg_ws_workload", "max_ws_workload",
-)  # fmt: skip
-
 
 # A JMX-exporter JVM in cr-jvm, scraped by the chart's kubex-jvm-endpoint job, which attaches namespace, pod and container
 JVM_NAMESPACE = "cr-jvm"
@@ -214,7 +205,6 @@ SCENARIO = ScenarioSpec(
         ],
     ),
     forwarder=ForwarderSpec(
-        job_name="container-resources-forwarder",
         window_seconds=240,
         collection=Collection(interval="minutes", interval_size=3, history=1, sample_rate=1),
     ),
@@ -224,45 +214,20 @@ SCENARIO = ScenarioSpec(
         Wait(kind="job", name="done", namespace=NAMESPACE, condition="Complete", timeout=600),
     ],
     snapshot_resources=("resourcequotas", "namespaces", "deployments", "statefulsets", "daemonsets", "jobs", "cronjobs"),
-    files={
-        **dict.fromkeys(
-            (
-                "cluster/attributes.csv",
-                "cluster/config.csv",
-                "cluster/cpu_requests.csv",
-                "cluster/cpu_reservation_percent.csv",
-                "cluster/memory_requests.csv",
-                "cluster/memory_reservation_percent.csv",
-                *(f"container/{name}.csv" for name in (*CONTAINER_FILES, "events", "ephemeral_storage_request")),
-                *JVM_FILES,
-                "node/attributes.csv",
-                "node/config.csv",
-                "node/cpu_limit.csv",
-                "node/cpu_request.csv",
-                "node/cpu_reservation_percent.csv",
-                "node/ephemeral_storage_request.csv",
-                "node/ephemeral_storage_reservation_percent.csv",
-                "node/memory_limit.csv",
-                "node/memory_request.csv",
-                "node/memory_reservation_percent.csv",
-                "node/pod_count.csv",
-                "node_group/attributes.csv",
-                "node_group/config.csv",
-                "node_group/cpu_requests.csv",
-                "node_group/cpu_reservation_percent.csv",
-                "node_group/current_size.csv",
-                "node_group/memory_requests.csv",
-                "node_group/memory_reservation_percent.csv",
-                "rq/attributes.csv",
-                "rq/config.csv",
-                "rq/cpu_limits.csv",
-                "rq/cpu_requests.csv",
-                "rq/mem_limits.csv",
-                "rq/mem_requests.csv",
-                "rq/pods.csv",
-            ),
-            "populated",
-        ),
+    files=BASE_FILES
+    | frozenset(JVM_FILES)
+    | {
+        "container/events.csv",
+        "container/ephemeral_storage_request.csv",
+        "node/ephemeral_storage_request.csv",
+        "node/ephemeral_storage_reservation_percent.csv",
+        "rq/attributes.csv",
+        "rq/config.csv",
+        "rq/cpu_limits.csv",
+        "rq/cpu_requests.csv",
+        "rq/mem_limits.csv",
+        "rq/mem_requests.csv",
+        "rq/pods.csv",
     },
 )
 
@@ -287,12 +252,6 @@ TERMINAL = {"done", "failed"}
 CONTROLLERS = ["web", "db", "agent", "batch", "tick"]  # entities the collector sizes
 KEYS = ["ClusterName", "Namespace", "EntityName", "EntityType", "ContainerName"]
 CONTAINER_IDS = [f"{e}-{c}" for e, c in CONTAINERS]
-
-
-@pytest.fixture(scope="session")
-def run(stack_run):
-    with stack_run(SCENARIO, HERE) as active:
-        yield active
 
 
 # --- Kubernetes truth, read from the snapshots --------------------------------

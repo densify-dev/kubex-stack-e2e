@@ -12,7 +12,6 @@ collected and not used.
 from __future__ import annotations
 
 from decimal import Decimal
-from pathlib import Path
 
 import pytest
 
@@ -27,6 +26,7 @@ from harness.archive import (
 from harness.universal import *  # noqa: F403 - collected as this scenario's tests
 from harness.oracle import quantity
 from harness.spec import (
+    BASE_FILES,
     ClusterSpec,
     Collection,
     ForwarderSpec,
@@ -39,7 +39,6 @@ from harness.spec import (
     Wait,
 )
 
-HERE = Path(__file__).parent
 GROUP_LABEL = "topology.kubex.ai/node-group"
 # The collector reads HwModel from this label (internal/node/node.go:297); Kind sets none of its own.
 INSTANCE_TYPE = "node.kubernetes.io/instance-type"
@@ -141,7 +140,6 @@ SCENARIO = ScenarioSpec(
         ],
     ),
     forwarder=ForwarderSpec(
-        job_name="node-pressure-forwarder",
         window_seconds=180,
         collection=Collection(interval="minutes", interval_size=1, history=1, sample_rate=1),
     ),
@@ -150,49 +148,7 @@ SCENARIO = ScenarioSpec(
         Wait(kind="pod", name=name, namespace=WORKLOAD_NAMESPACE, condition="Ready", timeout=300)
         for name in ("on-worker", "on-worker2", "on-worker3")
     ],
-    files={
-        "cluster/attributes.csv": "populated",
-        "cluster/config.csv": "populated",
-        "cluster/cpu_requests.csv": "populated",
-        "cluster/cpu_reservation_percent.csv": "populated",
-        "cluster/memory_requests.csv": "populated",
-        "cluster/memory_reservation_percent.csv": "populated",
-        "container/attributes.csv": "populated",
-        "container/avg_cpu_mcores_workload.csv": "populated",
-        "container/avg_cpu_throttling_percent_workload.csv": "populated",
-        "container/avg_mem_workload.csv": "populated",
-        "container/avg_rss_workload.csv": "populated",
-        "container/avg_ws_workload.csv": "populated",
-        "container/config.csv": "populated",
-        "container/cpu_limit.csv": "populated",
-        "container/cpu_request.csv": "populated",
-        "container/current_size.csv": "populated",
-        "container/max_cpu_mcores_workload.csv": "populated",
-        "container/max_cpu_throttling_percent_workload.csv": "populated",
-        "container/max_mem_workload.csv": "populated",
-        "container/max_restarts.csv": "populated",
-        "container/max_rss_workload.csv": "populated",
-        "container/max_ws_workload.csv": "populated",
-        "container/memory_limit.csv": "populated",
-        "container/memory_request.csv": "populated",
-        "container/sum_cpu_throttling_seconds_workload.csv": "populated",
-        "node/attributes.csv": "populated",
-        "node/config.csv": "populated",
-        "node/cpu_limit.csv": "populated",
-        "node/cpu_request.csv": "populated",
-        "node/cpu_reservation_percent.csv": "populated",
-        "node/memory_limit.csv": "populated",
-        "node/memory_request.csv": "populated",
-        "node/memory_reservation_percent.csv": "populated",
-        "node/pod_count.csv": "populated",
-        "node_group/attributes.csv": "populated",
-        "node_group/config.csv": "populated",
-        "node_group/cpu_requests.csv": "populated",
-        "node_group/cpu_reservation_percent.csv": "populated",
-        "node_group/current_size.csv": "populated",
-        "node_group/memory_requests.csv": "populated",
-        "node_group/memory_reservation_percent.csv": "populated",
-    },
+    files=BASE_FILES,
 )
 
 CLUSTER = SCENARIO.name
@@ -202,12 +158,6 @@ GROUPS = {"pool-a": WORKERS[:2], "pool-b": WORKERS[2:]}
 ALL_NODES = {"kubernetes.io/os": "linux"}
 
 pytestmark = pytest.mark.pr
-
-
-@pytest.fixture(scope="session")
-def run(stack_run):
-    with stack_run(SCENARIO, HERE) as active:
-        yield active
 
 
 def _node(name):
@@ -545,7 +495,6 @@ def test_group_attribute_labels(archive, oracle, group):
 @pytest.mark.parametrize("path", ["cluster/config.csv", "cluster/attributes.csv"])
 def test_cluster_is_described_once(archive, path):
     assert [row["Name"] for row in archive.csv(path)] == [CLUSTER]
-
 
 
 def test_cluster_attributes_match_the_cluster(archive, oracle):
