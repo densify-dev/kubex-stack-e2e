@@ -147,8 +147,6 @@ SCENARIO = ScenarioSpec(
     files=BASE_FILES | frozenset(EPHEMERAL_FILES),
 )
 
-pytestmark = pytest.mark.pr
-
 # Everything is exact: bytes and ratios of exact integers, written with %f (5e-7).
 TOLERANCE = 1e-6
 

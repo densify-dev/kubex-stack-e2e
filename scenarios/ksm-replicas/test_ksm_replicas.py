@@ -100,8 +100,6 @@ SCENARIO = ScenarioSpec(
     files=BASE_FILES | frozenset(RQ_FILES),
 )
 
-pytestmark = pytest.mark.pr
-
 CLUSTER = NAME
 TOLERANCE = 1e-6  # %f series: worst-case print error 5e-7
 KEYS = ["ClusterName", "Namespace", "EntityName", "EntityType", "ContainerName"]

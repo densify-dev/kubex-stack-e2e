@@ -261,8 +261,6 @@ HAND = {
 }  # fmt: skip
 assert {path: list(expected.values()) for path, _, _, expected, _ in CASES} == {p: pytest.approx(v, abs=1e-6) for p, v in HAND.items()}
 
-pytestmark = pytest.mark.pr
-
 
 # --- archive shape -----------------------------------------------------------
 

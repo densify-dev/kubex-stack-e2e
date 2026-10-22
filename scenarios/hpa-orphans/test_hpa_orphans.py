@@ -125,8 +125,6 @@ SCENARIO = ScenarioSpec(
     files=BASE_FILES | frozenset(HPA_FILES),
 )
 
-pytestmark = pytest.mark.pr
-
 
 def _identity(hpa):
     return (NAME, NAMESPACE, HPAS[hpa][0], "Deployment", "app", hpa) if hpa in CLASSIFIED else (NAME, NAMESPACE, "", "", "", hpa)

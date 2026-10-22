@@ -274,8 +274,6 @@ SCENARIO = ScenarioSpec(
     files=BASE_FILES | frozenset(GPU_FILES),
 )
 
-pytestmark = pytest.mark.pr
-
 
 # --- archive helpers ----------------------------------------------------------
 

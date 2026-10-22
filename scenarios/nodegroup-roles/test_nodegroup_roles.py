@@ -160,8 +160,6 @@ ENTITY_TABLES = ["node_group/config.csv", "node_group/attributes.csv"]
 KEYS = ["ClusterName", "NodeGroupName"]
 IDENTITIES = [(CLUSTER, group) for group in MEMBERS]
 
-pytestmark = pytest.mark.pr
-
 
 def _selector(group):
     return {EXPECT_GROUP: group}

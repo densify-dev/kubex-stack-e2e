@@ -231,8 +231,6 @@ SCENARIO = ScenarioSpec(
     files=BASE_FILES | frozenset(EXPORTER_FILES),
 )
 
-pytestmark = pytest.mark.pr
-
 
 def _grid(archive):
     return expected_timestamps(archive.csv("cluster/config.csv").one(Name=NAME)["AuditTime"], SCENARIO.forwarder.collection)

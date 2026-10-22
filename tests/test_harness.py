@@ -242,17 +242,14 @@ class CommandAndReceiverTest(unittest.TestCase):
                 "pod output\n",
             )
 
-    def test_failure_digest_groups_by_message_and_escapes(self) -> None:
-        table = artifacts_mod.failure_digest(
-            [
-                ("test_os[a]", "s/t.py", 10, "assert '' == 'linux'"),
-                ("test_os[b]", "s/t.py", 10, "assert '' == 'linux'"),
-                ("test_os[c]", "s/t.py", 10, "assert '' == 'linux'"),
-                ("test_cpu", "s/t.py", 20, "assert 1 == 2 | 100%"),
-            ],
-            shown=2,
-        )
-        self.assertIn("4 failed.", table)
+    def test_failure_table_groups_by_message_and_escapes(self) -> None:
+        failures = [
+            ("test_os[a]", "s/t.py", 10, "assert '' == 'linux'"),
+            ("test_os[b]", "s/t.py", 10, "assert '' == 'linux'"),
+            ("test_os[c]", "s/t.py", 10, "assert '' == 'linux'"),
+            ("test_cpu", "s/t.py", 20, "assert 1 == 2 | 100%"),
+        ]
+        table = "\n".join(artifacts_mod.failure_table(artifacts_mod.group_failures(failures), shown=2))
         self.assertIn("| test_os[a]<br>test_os[b]<br>and 1 more | assert '' == 'linux' | `s/t.py:10` |", table)
         self.assertIn("| test_cpu | assert 1 == 2 \\| 100% | `s/t.py:20` |", table)
 

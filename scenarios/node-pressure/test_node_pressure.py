@@ -157,8 +157,6 @@ WORKERS = NODES[1:]
 GROUPS = {"pool-a": WORKERS[:2], "pool-b": WORKERS[2:]}
 ALL_NODES = {"kubernetes.io/os": "linux"}
 
-pytestmark = pytest.mark.pr
-
 
 def _node(name):
     return {"kubernetes.io/hostname": name}

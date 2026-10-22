@@ -157,10 +157,3 @@ def failure_annotation(group: Group, shown: int = 5, prefix: str = "") -> str:
         f"::error file={_command_escape(file, property_value=True)},line={line},"
         f"title={_command_escape(title, property_value=True)}::{_command_escape(message)}"
     )
-
-
-def failure_digest(failures: Sequence[Failure], shown: int = 5) -> str:
-    """Markdown failure table for a scenario's ``failures.md``."""
-
-    table = failure_table(group_failures(failures), shown)
-    return "\n".join(["## Failed tests", "", f"{len(failures)} failed.", "", *table]) + "\n\n"

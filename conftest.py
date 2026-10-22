@@ -15,7 +15,6 @@ from typing import Iterator
 import pytest
 
 from harness.archive import Archive
-from harness.artifacts import failure_digest
 from harness.oracle import Oracle
 from harness.run import Run, execute, replay
 
@@ -83,22 +82,16 @@ def pytest_assertrepr_compare(op: str, left: object, right: object) -> list[str]
 
 
 def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
-    """CI sets FAILURES_MD; the run-level report job reads failures.json and owns every annotation."""
+    """CI sets FAILURES_JSON; the run-level report job reads it and owns every annotation."""
 
-    if not (digest_path := os.environ.get("FAILURES_MD")):
+    if not (failures_path := os.environ.get("FAILURES_JSON")):
         return
     reports = [r for kind in ("failed", "error") for r in terminalreporter.stats.get(kind, [])]
     failures = [_failure(r, terminalreporter.config.rootpath) for r in reports]
     if failures:
-        path = Path(digest_path)
+        path = Path(failures_path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(failure_digest(failures), encoding="utf-8")
-        path.with_suffix(".json").write_text(json.dumps(failures), encoding="utf-8")
-
-
-def pytest_configure(config: pytest.Config) -> None:
-    config.addinivalue_line("markers", "pr: fast tier, gates pull requests")
-    config.addinivalue_line("markers", "release: full tier")
+        path.write_text(json.dumps(failures), encoding="utf-8")
 
 
 @pytest.fixture(scope="module")

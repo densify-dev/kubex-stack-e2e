@@ -12,14 +12,6 @@ on:
         required: false
         type: string
         default: ""
-      tier:
-        description: Test tier
-        required: true
-        type: choice
-        default: pr
-        options:
-          - pr
-          - release
       stack_chart_version:
         description: Chart version override (blank uses the latest stable)
         required: false
@@ -82,7 +74,6 @@ jobs:
           digest="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
           echo "chart_version=${version}" >> "${GITHUB_OUTPUT}"
           echo "collector_image=${image%%[:@]*}@${digest}" >> "${GITHUB_OUTPUT}"
-          printf '**Chart:** %s\n\n**Collector:** %s (%s)\n' "${version}" "${image}" "${digest}" >> "${GITHUB_STEP_SUMMARY}"
 
       - name: List scenarios
         id: scenarios
@@ -133,9 +124,6 @@ jobs:
       SCENARIO: ${{ matrix.scenario }}
       CHART_VERSION: ${{ needs.resolve.outputs.chart_version }}
       COLLECTOR_IMAGE: ${{ needs.resolve.outputs.collector_image }}
-      # `-m release` alone would skip tests marked only `pr`, so the full tier is
-      # always the disjunction.
-      TIER: ${{ inputs.tier == 'release' && 'pr or release' || 'pr' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -167,39 +155,15 @@ jobs:
           sudo install kubectl /usr/local/bin/kubectl
           kubectl version --client
 
+      # The report job writes the only job summary and every annotation of the run.
       - name: Run functional scenario
-        id: functional-scenario
         env:
-          FAILURES_MD: artifacts/kind-functional/${{ matrix.scenario }}/failures.md
+          FAILURES_JSON: artifacts/kind-functional/${{ matrix.scenario }}/failures.json
         run: |
-          mkdir -p artifacts/kind-functional
           python3 -m pytest "scenarios/${SCENARIO}" -v --tb=short -o verbosity_assertions=0 \
-            -m "${TIER}" \
-            --junitxml="artifacts/kind-functional/${SCENARIO}-pytest.xml" \
+            --junitxml="artifacts/kind-functional/${SCENARIO}/pytest.xml" \
             --stack-chart-version "${CHART_VERSION}" \
             --collector-image "${COLLECTOR_IMAGE}"
-
-      # The report job writes the only job summary and every annotation of the run.
-      - name: Prepare scenario artifact
-        if: always()
-        run: |
-          summary="artifacts/kind-functional/${SCENARIO}/summary.md"
-          report="artifacts/kind-functional/${SCENARIO}-pytest.xml"
-          mkdir -p "$(dirname "${summary}")"
-          if [[ -f "${report}" ]]; then
-            mv "${report}" "$(dirname "${summary}")/pytest.xml"
-          fi
-          if [[ -f "${summary}" ]]; then
-            # The status goes under the scenario heading.
-            {
-              head -n 2 "${summary}"
-              printf '**Pytest status:** %s\n\n' "${{ steps.functional-scenario.outcome }}"
-              tail -n +3 "${summary}"
-            } > "${summary}.new"
-            mv "${summary}.new" "${summary}"
-          else
-            printf '# Scenario %s\n\n**Stack run:** failed before summary generation\n' "${SCENARIO}" > "${summary}"
-          fi
 
       - name: Upload scenario artifact
         if: always()
@@ -228,10 +192,6 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-          cache: pip
-
-      - name: Install Python dependencies
-        run: python3 -m pip install -r requirements.txt
 
       - name: Download scenario artifacts
         uses: actions/download-artifact@v8
