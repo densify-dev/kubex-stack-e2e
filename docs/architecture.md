@@ -44,50 +44,15 @@ Collector output is never the source of an expected value.
 
 ## Components
 
-```mermaid
-flowchart TD
-  CF["conftest.py: options, stack_run, archive, oracle, failure report"] --> RUN["run.py: execute / replay / Run"]
-  SPEC["spec.py: ScenarioSpec and friends"] --> RUN
-  RUN --> CL["cluster.py"]
-  RUN --> RC["receiver.py"]
-  RUN --> FX["fixtures.py + metric_fixture_server.py"]
-  RUN --> ST["stack.py"]
-  RUN --> PR["prometheus.py"]
-  RUN --> OR["oracle.py"]
-  RUN --> AV["archive.py"]
-  RUN --> AF["artifacts.py"]
-  UN["universal.py"] --> CV["coverage.py"]
-  UN --> AV
-  CV --> AV
-  SC["scenarios/*/test_*.py"] --> SPEC
-  SC --> UN
-  SC --> AV
-  SC --> OR
-```
-
-| Module | Responsibility |
-| --- | --- |
-| [`conftest.py`](../conftest.py) | CLI options, the `stack_run` factory, the `archive` and `oracle` fixtures, `actual`/`expected` assertion diffs, failure headlines and `failures.md`/`failures.json` in CI. |
-| [`harness/spec.py`](../harness/spec.py) | Frozen dataclasses: `ScenarioSpec`, `ClusterSpec`, `Node`, `StackSpec`, `ForwarderSpec`, `Collection`, `FixtureService`, `Metric`, `PrometheusSpec`, `Wait`. Validated at import, before any cluster work. |
-| [`harness/report.py`](../harness/report.py) | CI run roll-up: reads every scenario artifact, writes the job summary and the annotations. Exits 0 once written; red legs carry the failure. |
-| [`harness/run.py`](../harness/run.py) | `execute()` drives one run. `replay()` rebuilds a `Run` from artifacts. `Run` is what tests receive. |
-| [`harness/cluster.py`](../harness/cluster.py) | Renders the Kind config, creates and deletes the cluster, applies node labels, roles, taints and extended resources. |
-| [`harness/receiver.py`](../harness/receiver.py) | Deploys the fake receiver, reads its state, strips credentials, picks the archive body. |
-| [`harness/fixtures.py`](../harness/fixtures.py), [`harness/metric_fixture_server.py`](../harness/metric_fixture_server.py) | Deploy one Deployment and Service per `FixtureService`, serving the typed `Metric` series (gauges fixed, counters grow at `rate` per second). |
-| [`harness/stack.py`](../harness/stack.py) | `helm template` with harness defaults, collector preload, host alias injection, `kubectl apply`, forwarder Job trigger. |
-| [`harness/prometheus.py`](../harness/prometheus.py) | Readiness gates: declared targets are up and every `PrometheusQuery` returns at least `min_results` series. |
-| [`harness/oracle.py`](../harness/oracle.py) | `Snapshot`s and the `Oracle`: requests, limits, capacity, reservation percent and pod count per node selector, with drift detection across snapshots. |
-| [`harness/archive.py`](../harness/archive.py) | Safe ZIP/TAR extraction, strict CSV parsing (`Csv`, `Archive`), and assertion helpers: `assert_metric_grid`, `expected_timestamps`, `row_label`, `label_map`, `prometheus_labels`, `assert_log_clean`. |
-| [`harness/coverage.py`](../harness/coverage.py) | `INVENTORY` of every CSV and column the collector can emit, and `check_archive`. |
-| [`harness/universal.py`](../harness/universal.py) | Five tests every scenario imports. |
-| [`harness/artifacts.py`](../harness/artifacts.py) | Artifact directory, diagnostics, `summary.md`, the failure digest. |
-| [`harness/command.py`](../harness/command.py) | `run`/`kubectl` wrappers and `HarnessError`. |
-| [`harness/versions.py`](../harness/versions.py) | Pinned Kind node image and fixture image. The chart defaults to the latest stable version and the collector to the chart default. |
+The module map is the repo map in [AGENTS.md](../AGENTS.md#repo-map). The harness modules sit between two
+fixtures: `run` (provisions or replays the module's `SCENARIO`; `archive` and `oracle` read it) and the
+scenario tests, which read only the `Run`.
 
 ## Run lifecycle
 
-`execute()` in [`harness/run.py`](../harness/run.py) runs once per scenario module. The session-scoped
-`run` fixture enters it, all tests share the result, and teardown always runs.
+`execute()` in [`harness/run.py`](../harness/run.py) runs once per scenario module. The module-scoped
+`run` fixture in [`conftest.py`](../conftest.py) enters it, the module's tests share the result, and
+teardown always runs.
 
 ```mermaid
 flowchart TD
@@ -95,32 +60,32 @@ flowchart TD
   B --> C["fake receiver + fixture exporters"]
   C --> D["stack: helm template, preload collector, inject hostAliases, apply"]
   D --> E["scenario manifests + lifecycle waits"]
-  E --> F["readiness gates: targets and queries"]
+  E --> F["readiness gates: Prometheus queries"]
   F --> G["collection window: snapshot every 60 s"]
   G --> H["kubectl create job --from=cronjob, wait for success"]
   H --> I["capture receiver state, snapshot 'after upload'"]
   I --> J["load archive: validate paths, parse every CSV, extract"]
   J --> K["write snapshots.json + replay.json"]
   K --> L["pytest runs the tests"]
-  L --> M["teardown: oracle evidence, summary.md, versions.json, diagnostics, delete cluster"]
+  L --> M["teardown: summary.md, versions.json, diagnostics, delete cluster"]
 ```
 
 Details that matter when you read results:
 
-- **Collector image.** The order is `--collector-image`, then `StackSpec.collector_image`, then the
-  chart default. It is pulled and loaded into Kind under a local tag, and the forwarder runs it with
+- **Collector image.** The order is `--collector-image`, then the chart default. It is pulled and loaded into Kind under a local tag, and the forwarder runs it with
   `imagePullPolicy: Never`, so the tested image is exactly the one that was resolved.
   `helm_overrides` cannot set the image.
 - **Harness chart defaults.** Optional subcharts are disabled, the upload URL points at the receiver,
-  and the CronJob schedule never fires. The forwarder runs only when the harness creates a Job from it.
-- **Window.** It lasts `ForwarderSpec.window_seconds`, or `interval_size * interval + 10 s` when that
-  is unset. Readiness gates happen before it, so the window holds only warm series.
-- **No mutation in the window.** The harness changes nothing after readiness. Snapshots run on a
-  fixed 60 s cadence. Oracle queries fail with `OracleDrift` if a value differs between snapshots.
-  Churn that a scenario designs into its workload, such as a CronJob, is captured by the snapshots and
-  asserted from them.
+  and the CronJob is suspended. The forwarder runs only when the harness creates a Job from it.
+- **Window.** It lasts `ForwarderSpec.window_seconds` (default 180 s). Readiness gates happen before it, so
+  the window holds only warm series.
+- **No mutation in the window.** The harness changes nothing after readiness, so a rolling update or a
+  kube-state-metrics restart in the window is not tested. Snapshots run on a fixed 60 s cadence. Oracle
+  queries fail with `OracleDrift` if a value differs between snapshots. Churn that a scenario designs into
+  its workload, such as a CronJob, is captured by the snapshots and asserted from them.
 - **Grid.** `expected_timestamps(AuditTime, collection)` gives the exact `MetricTime` steps the
   collector must emit. `assert_metric_grid` checks the identity set and the steps per identity.
+  `AuditTime` itself is anchored to the forwarder pod's run time by a universal test.
 
 ## Artifacts
 
@@ -132,14 +97,13 @@ One directory per scenario: `artifacts/kind-functional/<scenario>/`. CI uploads 
 | `extracted-csv/` | The uploaded archive, extracted (CSVs and `log.txt`) | yes |
 | `snapshots.json` | Every Kubernetes snapshot (nodes, pods, `snapshot_resources`). Large. | yes |
 | `replay.json` | Upload count, Job name, Job failures | yes |
-| `summary.md` | Versions and run facts. CI adds the pytest status. | |
-| `versions.json` | Chart, requested image, digest, image ID on the node, collector version | |
-| `kubernetes-oracles.json` | Every oracle query a test made, with its inputs and expected value | |
+| `summary.md` | Versions and run facts | |
+| `versions.json` | Chart, requested image, digest, collector version | |
 | `server-state.json` | The receiver's captured requests, credentials removed | |
 | `prometheus-targets.json`, `prometheus-queries.json` | Readiness evidence | |
 | `kind-config.yaml`, `kubex-stack-rendered.yaml`, `fixture-inputs/` | What was applied | |
 | `diagnostics/` | Pods, events, nodes, EndpointSlices, forwarder Job and logs, per-pod logs | |
-| `pytest.xml`, `failures.md`, `failures.json` | CI only: JUnit report, the failure table, and the `(test, file, line, message)` failures the roll-up reads | |
+| `pytest.xml`, `failures.json` | CI only: JUnit report, and the `(test, file, line, message)` failures the roll-up reads | |
 
 ## Replay
 
@@ -173,7 +137,8 @@ Every scenario module runs `from harness.universal import *`, which adds these t
 | `test_job_never_failed` | The forwarder Job had no failed pod attempts. |
 | `test_log_is_clean` | `log.txt` has no Prometheus query failures. "No data" skips pass. |
 | `test_archive_matches_inventory` | No inventory column was lost, renamed or reordered (error). New CSVs or columns become warnings. |
-| `test_expected_files` | The archive's inventory CSVs are exactly `ScenarioSpec.files`, each `populated` or `header-only` as declared. |
+| `test_expected_files` | The archive's inventory CSVs are exactly `ScenarioSpec.files` (`BASE_FILES` plus what the workload adds), each with rows. |
+| `test_audit_time_is_when_the_forwarder_ran` | `AuditTime` lies between the floored start and finish of the forwarder pod that produced the archive. |
 
 Warnings go into `summary.md`. The run roll-up lists them once and emits one annotation titled **Coverage review needed**.
 
@@ -191,34 +156,22 @@ flowchart LR
 
 - `resolve` runs [`scripts/resolve_versions.py`](../scripts/resolve_versions.py) once and pins the
   collector to a digest, so every leg tests the same chart and image.
-- Each leg runs `pytest scenarios/<name> -m <tier>` with both versions passed explicitly and a
-  30-minute timeout. `conftest.py` writes `failures.md` and `failures.json` next to the artifact. A red
-  leg stays red but writes no job summary and no annotation.
-- `report` runs after the matrix (`needs`, not cancelled, so it also runs when legs failed). It downloads
-  every `kind-functional-*-<run-id>` artifact and runs `python3 -m harness.report artifacts <scenario>...`.
-  The artifacts are read as follows:
-
-  | Input | Gives |
-  | --- | --- |
-  | `pytest.xml` | Passed and failed counts. |
-  | `failures.json` | Failures, grouped by identical message as in `failures.md`. Messages starting `[setup error]` or `[call error]` count as setup errors. |
-  | `summary.md` | The stack-run state (a scenario without `collected` is a setup error) and the coverage warnings. |
-  | `versions.json` | Chart and collector versions. The headline notes when they differ between scenarios. |
-
-  A scenario without an artifact is `no artifact`. The job writes the only job summary (headline, one row
-  per scenario in matrix order, a `<details>` failure table per scenario, coverage warnings) and at most 10
-  `::error` annotations: the headline, failure groups round-robin across scenarios (largest first), then
-  `N more failures`. Coverage warnings are one `::warning`. GitHub adds one "Process completed with exit code 1" per red leg. The job
-  exits 0 once the summary is written; the red legs carry the run's failure.
+- Each leg runs `pytest scenarios/<name>` with both versions passed explicitly and a 30-minute timeout.
+  With `FAILURES_JSON` set, `conftest.py` writes the failures next to the artifact; `--junitxml` writes
+  `pytest.xml` there too. A red leg stays red but writes no job summary and no annotation.
+- `report` runs after the matrix, even when legs failed, and runs `python3 -m harness.report artifacts
+  <scenario>...` on the downloaded artifacts. It reads `pytest.xml` (counts), `failures.json` (failures,
+  grouped by identical message; `[setup error]` and `[call error]` count as setup errors), `summary.md`
+  (a scenario without `collected` is a setup error; the coverage warnings) and `versions.json`. It writes the
+  only job summary and at most 10 annotations (the headline as `::error`, or `::notice` when nothing
+  failed; failure groups round-robin across scenarios; one `::warning` for coverage). It exits 0 once written,
+  and the red legs carry the run's failure. A scenario without an artifact is `no artifact`.
 
 ## Scope and limits
 
 What the suite does not prove, across all scenarios. Each scenario doc lists its own gaps under "Not
 covered".
 
-- **No change in the window.** No hook changes the cluster after readiness. Tests use steady states and
-  cadences, such as a crash loop or a churn CronJob. A rolling update or a kube-state-metrics restart in
-  the window is not tested.
 - **One bad row per file.** A per-row loop stops at the first bad timestamp. The full CSV is in
   `extracted-csv/`.
 - **No independent truth.** Columns marked `excluded:` in [`harness/coverage.py`](../harness/coverage.py)
@@ -227,6 +180,5 @@ covered".
   machine-set node groups with cluster identifiers), real NVIDIA hardware and KWOK-scale clusters.
 - **Silent query failures.** A failing workload query writes no line to `log.txt`, so `test_log_is_clean`
   cannot see it. A missing file shows up in `test_expected_files`.
-- **Red tests stay red.** The repo keeps no list of known-failing tests.
 - **Reporting.** CI has no third-party JUnit reporter. The run roll-up reads only what a leg uploaded, so a
   leg that never uploaded shows as `no artifact` without a reason.

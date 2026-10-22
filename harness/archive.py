@@ -261,19 +261,18 @@ def prometheus_labels(labels: Mapping[str, str]) -> dict[str, str]:
 
 
 def expected_timestamps(audit_time: str, collection: Collection) -> list[str]:
-    """The MetricTime grid the collector emits for ``audit_time`` and ``collection`` (collector v4.7.6).
+    """The MetricTime grid the collector emits for ``audit_time`` and ``collection`` (collector v4.8.1).
 
     ``AuditTime`` is "now" truncated to the minute (internal/common/common.go:21-35). Each time series
     is one Prometheus range query over ``[AuditTime - Interval, AuditTime]`` with ``step = sample_rate``
     minutes (internal/common/prometheus.go:254-273), so the grid is exactly ``start + k*step`` in
     RFC3339 UTC (output.go:63-79). ``history`` only repeats the query for workload files
     (workload.go:252), which are not modelled. A step is absent when the series has no sample in
-    Prometheus' 5-minute lookback at that step; scenarios guarantee warm-up, and one that mutates
-    mid-window passes its own timestamps to ``assert_metric_grid``.
+    Prometheus' 5-minute lookback at that step; scenarios guarantee warm-up.
     """
 
     if collection.interval not in ("minutes", "hours"):
-        raise ValueError(f"collector v4.7.6 does not support interval {collection.interval!r}")
+        raise ValueError(f"collector v4.8.1 does not support interval {collection.interval!r}")
     interval = timedelta(seconds=collection.interval_size * INTERVAL_SECONDS[collection.interval])
     step = timedelta(minutes=collection.sample_rate)
     start = datetime.fromisoformat(audit_time).astimezone(timezone.utc) - interval

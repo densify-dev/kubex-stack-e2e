@@ -6,18 +6,7 @@ the background behind each step, see [architecture.md](architecture.md). To diag
 
 ## Ground rules
 
-These apply to every task below.
-
-- Write `assert actual == expected`. The collector output goes on the left, the truth on the right.
-- Take expected values from Kubernetes objects (snapshots, oracle) or from fixture definitions, never
-  from collector output.
-- Compare exactly. Use a tolerance only with a stated reason, e.g. `TOLERANCE = 1e-6` for `%f` print
-  error.
-- When the collector is wrong, the test stays red. Do not use `xfail` and do not weaken the assertion.
-- The harness never changes the cluster during the collection window. Churn must be part of the
-  workload, and its truth must come from the snapshots.
-- Tests read only from the `Run` (`run.archive`, `run.oracle`, `run.snapshots`), so replay gives the
-  same result.
+Follow the [design conventions in AGENTS.md](../AGENTS.md#design-conventions) in every task below.
 
 ## If you want to add a scenario
 
@@ -33,28 +22,23 @@ These apply to every task below.
        stack=StackSpec(helm_overrides={...}),          # copy the block from a similar scenario
        fixtures=[...], resources=["workload.yaml"], lifecycle=[Wait(...)],
        prometheus=PrometheusSpec(queries=[PrometheusQuery("ready", "<promql>", min_results=1)]),
-       forwarder=ForwarderSpec(job_name=f"{NAME}-forwarder", window_seconds=180, collection=Collection()),
-       files={"node/attributes.csv": "populated", ...},
+       forwarder=ForwarderSpec(window_seconds=180, collection=Collection()),
+       files=BASE_FILES | {"node/ephemeral_storage_request.csv", ...},   # the CSVs the workload adds
    )
-   pytestmark = pytest.mark.pr
    ```
 
-3. Wire it to the harness and import the universal checks:
+3. Import the universal checks. The module-scoped `run` fixture in [`conftest.py`](../conftest.py) reads
+   `SCENARIO` from the module, so there is no fixture to write:
 
    ```python
    from harness.universal import *  # noqa: F403 - collected as this scenario's tests
-
-   @pytest.fixture(scope="session")
-   def run(stack_run):
-       with stack_run(SCENARIO, HERE) as active:
-           yield active
    ```
 
 4. Add a `PrometheusQuery` readiness gate for every series and object state your tests rely on. The
    window starts only after all the gates pass.
 5. Run it live once:
    `.venv/bin/python -m pytest scenarios/<name> -v --tb=short`. Fill `files` from the run's
-   `archive-paths.json`, then iterate on the assertions with `--replay`.
+   `extracted-csv/` listing, then iterate on the assertions with `--replay`.
 6. CI finds the new directory on its own. If the scenario count goes above `max-parallel: 11` in
    [`kind-functional.yaml`](../.github/workflows/kind-functional.yaml), raise that value.
 7. Write `docs/scenarios/<name>.md` from [the template](scenarios/_template.md), add a row to
@@ -135,8 +119,8 @@ collector 4.8.0 went in this way: the header and entries in `coverage.py`, value
 
 After any inventory change:
 
-- Add the CSV to `ScenarioSpec.files` in each scenario that emits it, as `populated` or
-  `header-only`. Otherwise `test_expected_files` fails.
+- Add the CSV to `ScenarioSpec.files` in each scenario that emits it (to `BASE_FILES` when every scenario
+  does). Otherwise `test_expected_files` fails.
 - Classify each column as `test:...` when a test asserts it, or `excluded:<reason>` when Kind cannot
   produce truth for it. `unclassified` is allowed but should shrink.
 - Update the collector version in the module docstring, and recheck `expected_timestamps` in
@@ -147,15 +131,15 @@ After any inventory change:
 
 | What | Where | Default |
 | --- | --- | --- |
-| Chart | `STACK_CHART_VERSION` in [`harness/versions.py`](../harness/versions.py), `--stack-chart-version`, CI input `stack_chart_version` | `None`: latest stable |
-| Collector | `COLLECTOR_IMAGE` in `versions.py`, per scenario `StackSpec(collector_image=...)`, `--collector-image`, CI input `collector_image` | `None`: the chart's default image |
-| Kind node image | `KIND_NODE_IMAGE` in `versions.py` (by digest). Keep `KUBECTL_VERSION` in the workflow on the same Kubernetes minor. | pinned |
+| Chart | `--stack-chart-version`, CI input `stack_chart_version` | the latest stable version |
+| Collector | `--collector-image`, CI input `collector_image` | the chart's default image |
+| Kind node image | `KIND_NODE_IMAGE` in [`harness/versions.py`](../harness/versions.py) (by digest). Keep `KUBECTL_VERSION` in the workflow on the same Kubernetes minor. | pinned |
 | Fixture and helper image | `FIXTURE_IMAGE` in `versions.py`, plus the same digest written into some `workload.yaml` files (grep for it) | pinned |
-| Kind, kubectl, Helm, Python | `env` in [`kind-functional.yaml`](../.github/workflows/kind-functional.yaml), with sha256 | pinned |
+| Kind and kubectl | `env` in [`kind-functional.yaml`](../.github/workflows/kind-functional.yaml), with sha256 | pinned |
+| Helm, Python | `HELM_VERSION` and the `python-version` of each `setup-python` step in the same file | pinned |
 
-To test an unreleased collector, dispatch CI with `collector_image`. Do not edit the spec. CI always
-passes `--collector-image` (the resolved digest), and that flag beats `StackSpec.collector_image`. A
-spec pin therefore only affects local runs that omit the flag.
+To test an unreleased collector, dispatch CI with `collector_image`, or pass `--collector-image` locally.
+Do not edit the spec.
 
 ## If you change the harness
 

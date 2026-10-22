@@ -21,7 +21,7 @@ artifact is downloaded with `gh run download <run-id> -n kind-functional-<scenar
 
 | Path | What |
 | --- | --- |
-| `conftest.py` | CLI options, `stack_run`/`archive`/`oracle` fixtures, failure headlines, `failures.md` and `failures.json` |
+| `conftest.py` | CLI options, the module-scoped `run`/`archive`/`oracle` fixtures, failure headlines, `failures.json` |
 | `harness/report.py` | CI roll-up over all scenario artifacts: run summary and annotations |
 | `harness/run.py` | Run lifecycle (`execute`), `replay`, the `Run` object tests receive |
 | `harness/spec.py` | `ScenarioSpec` and the other typed setup dataclasses |
@@ -41,10 +41,10 @@ Measured sizes. Do not read the large ones whole.
 
 | File | Size | How to read |
 | --- | --- | --- |
-| `tests/test_harness.py` | ~1100 lines, 50 KB | `grep -n "def test_"`, then `sed -n 'A,Bp'` |
-| `scenarios/container-resources/test_container_resources.py` | ~940 lines, 47 KB | Read `docs/scenarios/container-resources.md` first, then grep the test |
-| `harness/coverage.py` | ~360 lines, 38 KB, lines up to 840 chars | `grep -n '"node/attributes.csv"' harness/coverage.py \| cut -c1-300` |
-| `scenarios/gpu-device-plugin/`, `node-pressure/`, `nodegroup-labels/`, `gpu-telemetry-fixtures/` tests | 450-610 lines, 20-27 KB | Docstring and `SCENARIO`, then grep |
+| `tests/test_harness.py` | ~1020 lines, 47 KB | `grep -n "def test_"`, then `sed -n 'A,Bp'` |
+| `scenarios/container-resources/test_container_resources.py` | ~900 lines, 45 KB | Read `docs/scenarios/container-resources.md` first, then grep the test |
+| `harness/coverage.py` | ~360 lines, 38 KB, lines up to 870 chars | `grep -n '"node/attributes.csv"' harness/coverage.py \| cut -c1-300` |
+| `scenarios/gpu-device-plugin/`, `node-pressure/`, `gpu-telemetry-fixtures/` tests | 400-560 lines, 18-26 KB | Docstring and `SCENARIO`, then grep |
 | `artifacts/.../snapshots.json` | ~1.1 MB | `jq -r '.[].label'`, `jq '.[0].pods[] \| select(.metadata.name=="solo")'` |
 | `artifacts/.../prometheus-targets.json` | ~190 KB | `jq` only |
 | `artifacts/.../server-state.json` | ~100 KB, base64 archive body | Use `extracted-csv/` instead |
