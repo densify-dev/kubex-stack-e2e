@@ -41,6 +41,8 @@ from harness.spec import (
 GROUP_LABEL = "topology.kubex.ai/node-group"
 # The collector reads HwModel from this label (internal/node/node.go:297); Kind sets none of its own.
 INSTANCE_TYPE = "node.kubernetes.io/instance-type"
+# The collector reads VirtualDatacenter from the region label and VirtualCluster from the zone label (node.go:298-301).
+REGION, ZONE = "topology.kubernetes.io/region", "topology.kubernetes.io/zone"
 WORKLOAD_NAMESPACE = "node-pressure-workload"
 DEDICATED = Taint(key="stack-e2e.kubex.ai/dedicated", value="pressure", effect="NoSchedule")
 # Half a core, so allocatable CPU is fractional (5.5 of 6) and must not be rounded to whole cores.
@@ -54,7 +56,8 @@ PERCENT_TOLERANCE = 0.01
 MIB = 2**20
 
 _SYSTEM_NODE = {"stack-e2e-system": "system"}
-_POOL_A = {GROUP_LABEL: "pool-a", INSTANCE_TYPE: "e2e.pool-a"}
+_POOL_A = {GROUP_LABEL: "pool-a", INSTANCE_TYPE: "e2e.pool-a", REGION: "e2e-region", ZONE: "e2e-zone-a"}
+_POOL_B = {GROUP_LABEL: "pool-b", INSTANCE_TYPE: "e2e.pool-b", REGION: "e2e-region", ZONE: "e2e-zone-b"}
 _CONTROL_PLANE_TOLERATION = [
     {"key": "node-role.kubernetes.io/control-plane", "operator": "Exists", "effect": "NoSchedule"}
 ]
@@ -66,7 +69,7 @@ SCENARIO = ScenarioSpec(
         workers=[
             Node(labels=_POOL_A, kubelet=RESERVED),
             Node(labels=_POOL_A, kubelet=RESERVED),
-            Node(labels={GROUP_LABEL: "pool-b", INSTANCE_TYPE: "e2e.pool-b"}, taints=[DEDICATED]),
+            Node(labels=_POOL_B, taints=[DEDICATED]),
         ],
     ),
     stack=StackSpec(
@@ -300,6 +303,10 @@ def test_node_attributes_identify_the_node(archive, oracle, name):
     row, node = _attributes(archive, name), _spec_of(oracle, name)
     assert row["VirtualTechnology"] == "Nodes"
     assert row["VirtualDomain"] == CLUSTER
+    # Region and zone are not interchangeable and the control plane has neither, so the columns are blank there.
+    labels = node["metadata"].get("labels", {})
+    assert row["VirtualDatacenter"] == labels.get(REGION, "")
+    assert row["VirtualCluster"] == labels.get(ZONE, "")
     assert row["OsArchitecture"] == node["status"]["nodeInfo"]["architecture"]
     assert row["ProviderId"] == node["spec"]["providerID"]
     assert row["K8sVersion"] == node["status"]["nodeInfo"]["kubeletVersion"]
@@ -334,6 +341,7 @@ def test_node_attribute_capacity_and_allocatable(archive, oracle, name):
             ("cpu", "Cpu", 1),
             ("memory", "Memory", 1),
             ("ephemeral-storage", "EphemeralStorage", 1),
+            ("hugepages-2Mi", "HugePages", 1),
         ):
             expected = quantity(_spec_of(oracle, name)["status"][field][resource], f"{name} {field} {resource}") * factor
             assert Decimal(row[prefix + column]) == expected, f"{prefix}{column} of {name}"

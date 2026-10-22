@@ -105,9 +105,10 @@ _NODE_CONFIG = {
 }
 _NODE_ATTRIBUTES = {
     **dict.fromkeys(("VirtualTechnology", "VirtualDomain", "OsArchitecture", "ProviderId", "K8sVersion"), _t(_NP + "test_node_attributes_identify_the_node")),
+    **dict.fromkeys(("VirtualDatacenter", "VirtualCluster"), _t(_NP + "test_node_attributes_identify_the_node")),
     **dict.fromkeys(("CpuLimit", "CpuRequest", "MemoryLimit", "MemoryRequest"), _t(_NP + "test_node_attribute_requests_and_limits", _TERMINAL_ATTRIBUTES)),
     **dict.fromkeys(
-        [f"{kind}{name}" for kind in ("Capacity", "Allocatable") for name in ("Pods", "Cpu", "CpuMcores", "Memory", "EphemeralStorage")],
+        [f"{kind}{name}" for kind in ("Capacity", "Allocatable") for name in ("Pods", "Cpu", "CpuMcores", "Memory", "EphemeralStorage", "HugePages")],
         _t(_NP + "test_node_attribute_capacity_and_allocatable"),
     ),
     "NodeTaints": _t(_NP + "test_node_attribute_taints"),

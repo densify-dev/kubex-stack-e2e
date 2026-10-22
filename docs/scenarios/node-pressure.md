@@ -13,14 +13,15 @@ Code: [`test_node_pressure.py`](../../scenarios/node-pressure/test_node_pressure
   CPU is fractional (3.5 of 4 cores) and must not be rounded to whole cores.
 - Node group files group nodes by the `topology.kubex.ai/node-group` label. Request series are in cores,
   attributes and config use their own units.
-- Node attributes carry taints, labels, capacity and allocatable as Kubernetes reports them.
+- Node attributes carry taints, labels, region, zone, capacity and allocatable (including huge pages) as
+  Kubernetes reports them. The workers carry one region and a zone per pool, the control plane neither.
 - Cluster files cover every node, control plane included.
 
 ## Setup
 
 | Item | Value |
 | --- | --- |
-| Cluster | 1 control plane (`stack-e2e-system=system`, runs the stack) + 3 workers. `worker` and `worker2` are in node group `pool-a` and set kubelet `system-reserved: cpu=500m,memory=1Gi`. `worker3` is in `pool-b`, tainted `stack-e2e.kubex.ai/dedicated=pressure:NoSchedule`, with no reservation. Each node has a `node.kubernetes.io/instance-type` label (`e2e.pool-a`, `e2e.pool-b`, `e2e.system`). |
+| Cluster | 1 control plane (`stack-e2e-system=system`, runs the stack) + 3 workers. `worker` and `worker2` are in node group `pool-a` and set kubelet `system-reserved: cpu=500m,memory=1Gi`. `worker3` is in `pool-b`, tainted `stack-e2e.kubex.ai/dedicated=pressure:NoSchedule`, with no reservation. Each node has a `node.kubernetes.io/instance-type` label (`e2e.pool-a`, `e2e.pool-b`, `e2e.system`). Workers also carry `topology.kubernetes.io/region=e2e-region` and `topology.kubernetes.io/zone` (`e2e-zone-a` for `pool-a`, `e2e-zone-b` for `pool-b`). |
 | Workloads | `node-pressure-workload`: bare Pods `on-worker` (300m / 256Mi request, 600m / 512Mi limit), `on-worker2` (500m / 384Mi, 800m / 768Mi) and `on-worker3` (700m / 512Mi, 1500m / 1Gi, tolerates the taint). Each is pinned to its worker by hostname. |
 | Fixtures | none |
 | Collector settings | `Collection(interval="minutes", interval_size=1, history=1, sample_rate=1)`, `node_group_list=label_topology_kubex_ai_node_group`. Node exporter, GPU process exporter, Beyla, node labeler and the ephemeral-storage exporter are disabled. |
@@ -87,7 +88,6 @@ The cluster files add the control plane: `cluster/cpu_requests.csv` is 2.95 core
 | Kubernetes snapshots (`run.snapshots`, `oracle.primary`) | Node spec and status: capacity, allocatable, taints, labels, `nodeInfo`, provider ID |
 | Oracle (`oracle.requests` / `limits` / `capacity` / `reservation_percent` / `pod_count`) | Node, group and cluster totals and percentages. Node selectors: hostname, group label, `kubernetes.io/os=linux`. |
 | Fixture series | none |
-| Collector grid (`expected_timestamps`) | `MetricTime` steps of every series |
 
 ## Tests
 
@@ -108,9 +108,9 @@ The cluster files add the control plane: `cluster/cpu_requests.csv` is 2.95 core
 | `test_node_config_hardware` | `HwTotalCpus`, `HwTotalPhysicalCpus`, fixed cores and threads, `HwTotalMemory` in MiB | snapshot | Wrong capacity or unit |
 | `test_node_config_os_name` | `OsName` equals `nodeInfo.operatingSystem` | snapshot | Wrong OS |
 | `test_node_config_model_and_network` | `HwModel` is the instance-type label, `HwMaxNetworkIoBps` is blank without a node exporter | snapshot | Wrong model source |
-| `test_node_attributes_identify_the_node` | `VirtualTechnology`, `VirtualDomain`, `OsArchitecture`, `ProviderId`, `K8sVersion` | snapshot | Node identity wrong |
+| `test_node_attributes_identify_the_node` | `VirtualTechnology`, `VirtualDomain`, `VirtualDatacenter` (region label), `VirtualCluster` (zone label), `OsArchitecture`, `ProviderId`, `K8sVersion` | snapshot | Node identity wrong, or region and zone swapped or dropped |
 | `test_node_attribute_requests_and_limits` | Whole mcores and MiB, truncated | oracle | Wrong rounding or unit |
-| `test_node_attribute_capacity_and_allocatable` | Pods, CPU (mcores and cores), memory and ephemeral storage, capacity and allocatable, as Kubernetes reports | snapshot | Wrong capacity or allocatable |
+| `test_node_attribute_capacity_and_allocatable` | Pods, CPU (mcores and cores), memory, ephemeral storage and 2Mi huge pages, capacity and allocatable, as Kubernetes reports | snapshot | Wrong capacity or allocatable |
 | `test_node_attribute_taints` | `NodeTaints` equals the node's taints | snapshot | Taints lost or misformatted |
 | `test_node_attribute_labels` | Every `label_*` entry in `NodeLabels` equals a Kubernetes node label | snapshot | Labels lost or changed |
 
@@ -139,21 +139,9 @@ The cluster files add the control plane: `cluster/cpu_requests.csv` is 2.95 core
 | `test_cluster_requests_match_the_cluster` | Cluster requests in cores and MiB | oracle | Wrong total |
 | `test_cluster_reservation_percent_matches_the_cluster` | Cluster reservation percent | oracle | Wrong denominator |
 
-## Run and replay
-
-```sh
-.venv/bin/python -m pytest scenarios/node-pressure -v --tb=short
-.venv/bin/python -m pytest scenarios/node-pressure --replay <artifact-dir> -q --tb=short
-```
-
-The module's `files` map is the base set that cadvisor, ephemeral-storage, the GPU scenarios, hpa-orphans,
-ksm-replicas and node-exporter copy.
-
 ## Extend
 
 - **New node or group.** Add it to `ClusterSpec` and, for a new group, to `GROUPS`. Pin a pod to it in
   `workload.yaml` and update the `pool-labels` and `node-allocatable-resources` readiness counts.
 - **New pod.** Give it distinct requests and limits and update the `workload-*` readiness counts.
-- Coverage inventory entries reference this module through the `_NP` prefix in
-  [`harness/coverage.py`](../../harness/coverage.py).
 - Follow [extending.md](../extending.md) for the general steps.
