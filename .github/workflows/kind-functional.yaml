@@ -66,6 +66,13 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
+      - name: Add Helm dependency repositories
+        run: |
+          helm repo add kubex https://densify-dev.github.io/helm-charts
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo update
+
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
@@ -161,6 +168,13 @@ jobs:
         uses: azure/setup-helm@v5
         with:
           version: ${{ env.HELM_VERSION }}
+
+      - name: Add Helm dependency repositories
+        run: |
+          helm repo add kubex https://densify-dev.github.io/helm-charts
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo update
 
       - name: Build Helm chart dependencies
         run: helm dependency build "${HELM_CHART_PATH}"
