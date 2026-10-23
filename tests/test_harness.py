@@ -305,6 +305,11 @@ class HelmValuesTest(unittest.TestCase):
         args = template_args("demo", StackSpec(), ForwarderSpec(), chart_version="2.0.0")
         self.assertEqual(args[args.index("--version") + 1], "2.0.0")
 
+    def test_local_chart_path_is_used_without_published_version(self) -> None:
+        args = template_args("demo", StackSpec(), ForwarderSpec(), chart_path="helm-charts/charts/kubex-automation-stack")
+        self.assertEqual(args[3], "helm-charts/charts/kubex-automation-stack")
+        self.assertNotIn("--version", args)
+
     def test_unused_subcharts_are_disabled_by_default_and_overridable(self) -> None:
         keys = ["kubex-connector", "kubex-ai-cdi", "kubex-automation-engine", "k8s-ephemeral-storage-metrics"]
         args = template_args("demo", StackSpec(), ForwarderSpec())
