@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Iterator
 
 import pytest
+import yaml
 
 from harness.archive import Archive
 from harness.oracle import Oracle
@@ -33,6 +34,11 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         "--replay",
         default=None,
         help="artifact directory of a previous run (needs snapshots.json, replay.json, extracted-csv/); no cluster is touched",
+    )
+    group.addoption(
+        "--known-bugs",
+        default=None,
+        help="known-bugs.yaml: listed assertion failures with a matching message are reported as xfail (CI only)",
     )
     group.addoption("--keep-cluster", action="store_true", help="leave the Kind cluster running")
     group.addoption(
@@ -64,6 +70,40 @@ def _failure(report: pytest.TestReport, rootpath: Path) -> tuple[str, str, int, 
     return test, path, line, message
 
 
+_KNOWN = pytest.StashKey[dict[str, dict]]()  # node id -> known-bugs.yaml entry
+_FOUND = pytest.StashKey[dict[str, list]]()  # "known" and "xpassed" entries for known-bugs.json
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    if path := config.getoption("known_bugs"):
+        entries = yaml.safe_load(Path(path).read_text(encoding="utf-8")) or []
+        config.stash[_KNOWN] = {e["test"]: e for e in entries}
+        config.stash[_FOUND] = {"known": [], "xpassed": []}
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item, call: pytest.CallInfo) -> Iterator[None]:
+    """A listed test that fails its assertion with the listed message is an xfail; a pass is a non-strict XPASS.
+
+    Setup errors, other exceptions and other messages stay failures, so an unknown problem still turns the run red.
+    """
+
+    report = yield
+    entry = item.config.stash.get(_KNOWN, {}).get(item.nodeid)
+    if not entry or report.when != "call":
+        return report
+    found, reason = item.config.stash[_FOUND], ", ".join(entry["bugs"])
+    if report.passed:
+        report.wasxfail = reason
+        found["xpassed"].append([item.nodeid, entry["bugs"]])
+    elif call.excinfo and call.excinfo.errisinstance(AssertionError):
+        *shown, headline = _failure(report, item.config.rootpath)
+        if entry["match"] in headline:
+            report.outcome, report.wasxfail = "skipped", reason
+            found["known"].append([*shown, entry["bugs"], headline])
+    return report
+
+
 def pytest_assertrepr_compare(op: str, left: object, right: object) -> list[str] | None:
     """Tests are written ``assert actual == expected``: name the sides and show only what differs."""
 
@@ -86,6 +126,10 @@ def pytest_terminal_summary(terminalreporter: pytest.TerminalReporter) -> None:
 
     if not (failures_path := os.environ.get("FAILURES_JSON")):
         return
+    if (found := terminalreporter.config.stash.get(_FOUND, None)) is not None:
+        path = Path(failures_path).with_name("known-bugs.json")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(found), encoding="utf-8")
     reports = [r for kind in ("failed", "error") for r in terminalreporter.stats.get(kind, [])]
     failures = [_failure(r, terminalreporter.config.rootpath) for r in reports]
     if failures:

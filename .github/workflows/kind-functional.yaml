@@ -184,7 +184,8 @@ jobs:
           python3 -m pytest "scenarios/${SCENARIO}" -v --tb=short -o verbosity_assertions=0 \
             --junitxml="artifacts/kind-functional/${SCENARIO}/pytest.xml" \
             --stack-chart-version "${CHART_VERSION}" \
-            --collector-image "${COLLECTOR_IMAGE}"
+            --collector-image "${COLLECTOR_IMAGE}" \
+            --known-bugs known-bugs.yaml
 
       - name: Upload scenario artifact
         if: always()
