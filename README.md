@@ -38,6 +38,7 @@ Scenario run options (defined in [`conftest.py`](conftest.py)):
 | --- | --- |
 | `--collector-image IMAGE` | Collector to test. Default: the chart's default image. |
 | `--stack-chart-version X.Y.Z` | Chart version. Default: the latest stable version. |
+| `--known-bugs FILE` | Report the failures listed in `known-bugs.yaml` as xfail. CI passes it; local runs and replay do not. |
 | `--replay DIR` | Re-run the assertions against a previous run's artifact directory. No cluster is created. |
 | `--keep-cluster` | Leave the Kind cluster running after the run. |
 | `--artifacts-root DIR` | Where artifacts go. Default: `artifacts/kind-functional`. |
@@ -69,7 +70,17 @@ gh workflow run kind-functional.yaml --ref <branch> \
 | `collector_image` | blank: the chart's default collector |
 | `helm_charts_ref` | blank: the published chart. A branch, tag or commit of `densify-dev/helm-charts` renders that checkout's `kubex-automation-stack` instead, e.g. `-f helm_charts_ref=chore/update-external-deps` |
 
-## Reading a red run
+## Reading a run
+
+Collector defects that are known but not yet fixed are listed in [`known-bugs.yaml`](known-bugs.yaml),
+and CI runs with `--known-bugs`. A listed test that fails with the listed message is a **known bug**: it
+does not turn the job red. A scenario with only known bugs shows `passed (N known bugs)`, the headline
+counts them (`0 failed, 620 passed, 82 known bugs in 11 scenarios`), and each scenario has a collapsible
+**Known bugs** table of bug ID, test and failure. Any other failure still turns the run red. When a
+listed test passes, the run stays green and a notice says **Known bug appears fixed**: remove its entry.
+Locally, without `--known-bugs`, every known bug is an ordinary red test.
+
+### Reading a red run
 
 Start at the run page. The `Run summary` job finishes last and owns it: the annotations box lists an
 **E2E run summary** headline (failed and passed counts, chart and collector versions) and one

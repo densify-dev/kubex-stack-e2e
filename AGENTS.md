@@ -21,7 +21,7 @@ artifact is downloaded with `gh run download <run-id> -n kind-functional-<scenar
 
 | Path | What |
 | --- | --- |
-| `conftest.py` | CLI options, the module-scoped `run`/`archive`/`oracle` fixtures, failure headlines, `failures.json` |
+| `conftest.py` | CLI options, the module-scoped `run`/`archive`/`oracle` fixtures, failure headlines, `failures.json`, the `--known-bugs` hook and `known-bugs.json` |
 | `harness/report.py` | CI roll-up over all scenario artifacts: run summary and annotations |
 | `harness/run.py` | Run lifecycle (`execute`), `replay`, the `Run` object tests receive |
 | `harness/spec.py` | `ScenarioSpec` and the other typed setup dataclasses |
@@ -31,6 +31,7 @@ artifact is downloaded with `gh run download <run-id> -n kind-functional-<scenar
 | `harness/universal.py` | Tests every scenario imports |
 | `harness/{cluster,stack,receiver,fixtures,prometheus,artifacts,command,versions}.py` | Provisioning, Helm, upload capture, fixtures, readiness, output, pins |
 | `scenarios/<name>/test_<name>.py`, `workload.yaml` | One scenario: spec, truth helpers, tests |
+| `known-bugs.yaml` | Known collector bugs: test node id, bug IDs, failure-message match. CI passes it with `--known-bugs` |
 | `tests/` | Harness unit tests |
 | `scripts/` | Fake receiver, host-alias injection, version resolver, legacy stack-validation scripts |
 | `docs/` | `architecture.md`, `extending.md`, `scenarios/` (index, template, per-scenario docs) |
@@ -77,7 +78,8 @@ Always:
 
 Never:
 
-- `xfail`, `skip` or weaken an assertion to pass a collector defect. A red test is the finding.
+- `xfail`, `skip` or weaken an assertion to pass a collector defect. A red test is the finding. A known
+  bug is listed in `known-bugs.yaml`, never marked in a test file.
 - Mutate the cluster during the collection window. Designed churn belongs in the workload, with truth
   from snapshots.
 - Copy a value from the archive into an expectation.
@@ -89,6 +91,7 @@ Never:
 | Scenario setup or tests | `docs/scenarios/<name>.md` (including its Not covered list) and its row in `docs/scenarios/README.md` |
 | New scenario | New doc from `docs/scenarios/_template.md`, index row, `max-parallel` in the workflow if needed |
 | Harness module, lifecycle, artifacts, CLI option, known limit | `docs/architecture.md`, and `README.md` if user-facing |
+| Known bug added, fixed or re-matched | `known-bugs.yaml` |
 | Process for a common task | `docs/extending.md` |
 | Repo map or conventions | This file |
 
@@ -99,8 +102,8 @@ Check every name and path you write with `grep`.
 
 - Commits follow Conventional Commits with a single subject line and no body
   (e.g. `test(container-resources): cover restart events`).
-- Never put internal bug or ticket IDs, review notes, planning documents or phase labels in repo files,
-  commit messages or docs. Untracked review or planning files in the repo root are local-only. Do not
+- Internal bug IDs are allowed only in `known-bugs.yaml`. Never put them, ticket IDs, review notes, planning
+  documents or phase labels anywhere else in repo files, commit messages or docs. Untracked review or planning files in the repo root are local-only. Do not
   link, cite or commit them.
 - A local `graphify-out/` (git-excluded) may exist. Its `GRAPH_REPORT.md` summarizes module
   relationships.

@@ -107,6 +107,7 @@ One directory per scenario: `artifacts/kind-functional/<scenario>/`. CI uploads 
 | `kind-config.yaml`, `kubex-stack-rendered.yaml`, `fixture-inputs/` | What was applied | |
 | `diagnostics/` | Pods, events, nodes, EndpointSlices, forwarder Job and logs, per-pod logs | |
 | `pytest.xml`, `failures.json` | CI only: JUnit report, and the `(test, file, line, message)` failures the roll-up reads | |
+| `known-bugs.json` | CI only: `known` entries `(test, file, line, bug IDs, headline)` and `xpassed` entries `(node id, bug IDs)` | |
 
 ## Replay
 
@@ -163,8 +164,14 @@ flowchart LR
 - Each leg runs `pytest scenarios/<name>` with both versions passed explicitly and a 30-minute timeout.
   With `FAILURES_JSON` set, `conftest.py` writes the failures next to the artifact; `--junitxml` writes
   `pytest.xml` there too. A red leg stays red but writes no job summary and no annotation.
+- Each leg also passes `--known-bugs known-bugs.yaml`. In `conftest.py`, a listed test (by node id) whose call
+  phase raises an `AssertionError` containing the entry's `match` is reported as xfail with the bug IDs as the
+  reason, so pytest exits 0 when only known bugs failed. A different message, a setup or call error or any other
+  exception stays a failure. A listed test that passes is a non-strict XPASS. Both go to `known-bugs.json`.
 - `report` runs after the matrix, even when legs failed, and runs `python3 -m harness.report artifacts
-  <scenario>...` on the downloaded artifacts. It reads `pytest.xml` (counts), `failures.json` (failures,
+  <scenario>...` on the downloaded artifacts. It reads `pytest.xml` (counts; xfails count as skipped), `known-bugs.json`
+  (a scenario with only known bugs is `passed (N known bugs)`; each gets a **Known bugs** table and no
+  annotation; an XPASS becomes a `::notice` titled **Known bug appears fixed**), `failures.json` (failures,
   grouped by identical message; `[setup error]` and `[call error]` count as setup errors), `summary.md`
   (a scenario without `collected` is a setup error; the coverage warnings) and `versions.json`. It writes the
   only job summary and at most 10 annotations (the headline as `::error`, or `::notice` when nothing

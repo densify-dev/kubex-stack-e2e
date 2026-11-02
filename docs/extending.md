@@ -154,6 +154,22 @@ run summary shows the version from that checkout's `Chart.yaml`, and the collect
 chart defaults to unless you also set `collector_image`. Compare the failing tests with the latest run on
 the published chart to see what the chart change did.
 
+## Add or remove a known-bug entry
+
+A collector bug that is still unfixed is listed in [`known-bugs.yaml`](../known-bugs.yaml), never skipped or
+marked in a test. CI passes the file with `--known-bugs`; local runs and replay do not, so the test stays red there.
+
+```yaml
+- test: scenarios/<name>/test_<name>.py::<test id>   # the exact node id from --collect-only
+  bugs: [<bug-id>]
+  match: <substring of the failure message>
+```
+
+- Add an entry after you replayed the failure and chose a `match` that holds for any run, such as the expected value
+  rather than a drifting actual one. The run shows the entry as a known bug in the summary.
+- Remove the entry when a run shows **Known bug appears fixed**, or when the test is renamed or deleted.
+- An entry never hides a different failure. A changed message, a setup or call error or another exception is red.
+
 ## If you change the harness
 
 - Add or adjust a unit test under [`tests/`](../tests/), then run
