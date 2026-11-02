@@ -72,6 +72,9 @@ flowchart TD
 
 Details that matter when you read results:
 
+- **Chart.** `--stack-chart-version` is a published version of `kubex/kubex-automation-stack`, blank
+  for the newest stable one. A directory instead is a chart checkout: the harness runs
+  `helm dependency update` on it, renders it in place and records the version from its `Chart.yaml`.
 - **Collector image.** The order is `--collector-image`, then the chart default. It is pulled and loaded into Kind under a local tag, and the forwarder runs it with
   `imagePullPolicy: Never`, so the tested image is exactly the one that was resolved.
   `helm_overrides` cannot set the image.
@@ -155,7 +158,8 @@ flowchart LR
 ```
 
 - `resolve` runs [`scripts/resolve_versions.py`](../scripts/resolve_versions.py) once and pins the
-  collector to a digest, so every leg tests the same chart and image.
+  collector to a digest, so every leg tests the same chart and image. With the `helm_charts_ref` input,
+  `resolve` and every leg check out that ref of `densify-dev/helm-charts` and render its chart directory.
 - Each leg runs `pytest scenarios/<name>` with both versions passed explicitly and a 30-minute timeout.
   With `FAILURES_JSON` set, `conftest.py` writes the failures next to the artifact; `--junitxml` writes
   `pytest.xml` there too. A red leg stays red but writes no job summary and no annotation.

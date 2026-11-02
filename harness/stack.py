@@ -67,6 +67,27 @@ def resolve_chart_version(chart: str, repo_root: Path) -> str:
     return max(stable, key=lambda v: tuple(int(part) for part in v.split(".")))
 
 
+def is_local_chart(chart_version: str | None) -> bool:
+    """A chart version that names a directory is a chart checkout, e.g. an unreleased helm-charts branch."""
+
+    return bool(chart_version) and Path(chart_version).is_dir()
+
+
+def prepare_chart(chart_version: str | None, repo_root: Path) -> str:
+    """Make the chart renderable and return its version.
+
+    A local chart gets its dependencies fetched and its version from Chart.yaml. Otherwise
+    ``chart_version`` is a published version, blank for the newest stable one.
+    """
+
+    if is_local_chart(chart_version):
+        run(["helm", "dependency", "update", chart_version], cwd=repo_root, timeout=900)
+        return str(yaml.safe_load((Path(chart_version) / "Chart.yaml").read_text())["version"])
+    run(["helm", "repo", "add", CHART.split("/")[0], REPOSITORY, "--force-update"], cwd=repo_root)
+    run(["helm", "repo", "update"], cwd=repo_root)
+    return chart_version or resolve_chart_version(CHART, repo_root)
+
+
 def find_forwarder(manifest: str) -> tuple[str, str]:
     """(CronJob name, image) of the single CronJob running the data forwarder."""
 
@@ -124,13 +145,15 @@ def template_args(
     forwarder: ForwarderSpec,
     chart_version: str | None = None,
     collector_image: str | None = None,
-    chart_path: str | None = None,
 ) -> list[str]:
     """``helm template`` args. ``collector_image`` is the preloaded local tag, never pulled."""
 
-    args = ["helm", "template", RELEASE_NAME, chart_path or CHART, "--namespace", stack.namespace]
-    if chart_version:
-        args.extend(["--version", chart_version])
+    if is_local_chart(chart_version):
+        args = ["helm", "template", RELEASE_NAME, chart_version, "--namespace", stack.namespace]
+    else:
+        args = ["helm", "template", RELEASE_NAME, CHART, "--namespace", stack.namespace]
+        if chart_version:
+            args.extend(["--version", chart_version])
     collection = forwarder.collection
     defaults: dict[str, object] = {
         "stack.densify.createSecret": False,
@@ -185,7 +208,6 @@ def install(
     versions: dict[str, Any],
     chart_version: str | None = None,
     collector_image: str | None = None,
-    chart_path: str | None = None,
 ) -> str:
     """Resolve versions, preload the collector, render, inject host aliases, apply.
 
@@ -196,17 +218,12 @@ def install(
     from scripts.inject_host_aliases import inject
 
     stack = scenario.stack
-    if chart_path:
-        chart_metadata = yaml.safe_load(Path(chart_path, "Chart.yaml").read_text(encoding="utf-8"))
-        version = str(chart_metadata["version"])
-    else:
-        run(["helm", "repo", "add", CHART.split("/")[0], REPOSITORY, "--force-update"], cwd=repo_root)
-        run(["helm", "repo", "update"], cwd=repo_root)
-        version = chart_version or resolve_chart_version(CHART, repo_root)
+    version = prepare_chart(chart_version, repo_root)
     versions["chart_version"] = version
+    chart = chart_version if is_local_chart(chart_version) else version
 
     def render(image: str | None = None) -> str:
-        args = template_args(scenario.name, stack, scenario.forwarder, version if not chart_path else None, image, chart_path)
+        args = template_args(scenario.name, stack, scenario.forwarder, chart, image)
         return run(args, cwd=repo_root, timeout=900)
 
     # The default render finds the CronJob (its image still names the forwarder)

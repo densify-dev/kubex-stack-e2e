@@ -139,7 +139,6 @@ def execute(
     chart_version: str | None = None,
     collector_image: str | None = None,
     keep_cluster: bool = False,
-    chart_path: str | None = None,
 ) -> Iterator[Run]:
     """Provision, collect, capture, yield, then always diagnose and tear down."""
 
@@ -163,7 +162,7 @@ def execute(
         receiver.deploy(repo_root)
         fixtures.deploy(scenario, repo_root, artifacts)
         cronjob = stack.install(
-            scenario, repo_root, artifacts, receiver.cluster_ip(repo_root), versions, chart_version, collector_image, chart_path
+            scenario, repo_root, artifacts, receiver.cluster_ip(repo_root), versions, chart_version, collector_image
         )
         stack.apply_resources(resources, repo_root)
         stack.await_lifecycle(scenario, repo_root)

@@ -23,7 +23,7 @@ REPO_ROOT = Path(__file__).parent.resolve()
 
 def pytest_addoption(parser: pytest.Parser) -> None:
     group = parser.getgroup("kind-functional")
-    group.addoption("--stack-chart-version", default=None, help="override the stack chart version")
+    group.addoption("--stack-chart-version", default=None, help="stack chart version, or a local chart directory (e.g. a helm-charts checkout)")
     group.addoption(
         "--collector-image",
         default=None,
@@ -35,7 +35,6 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         help="artifact directory of a previous run (needs snapshots.json, replay.json, extracted-csv/); no cluster is touched",
     )
     group.addoption("--keep-cluster", action="store_true", help="leave the Kind cluster running")
-    group.addoption("--stack-chart-path", default=None, help="local stack chart directory to render")
     group.addoption(
         "--artifacts-root",
         default="artifacts/kind-functional",
@@ -111,7 +110,6 @@ def run(request: pytest.FixtureRequest, pytestconfig: pytest.Config) -> Iterator
         pytestconfig.getoption("stack_chart_version"),
         pytestconfig.getoption("collector_image") or None,
         bool(pytestconfig.getoption("keep_cluster")),
-        pytestconfig.getoption("stack_chart_path"),
     ) as active:
         yield active
 

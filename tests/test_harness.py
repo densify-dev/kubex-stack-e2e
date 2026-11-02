@@ -305,11 +305,6 @@ class HelmValuesTest(unittest.TestCase):
         args = template_args("demo", StackSpec(), ForwarderSpec(), chart_version="2.0.0")
         self.assertEqual(args[args.index("--version") + 1], "2.0.0")
 
-    def test_local_chart_path_is_used_without_published_version(self) -> None:
-        args = template_args("demo", StackSpec(), ForwarderSpec(), chart_path="helm-charts/charts/kubex-automation-stack")
-        self.assertEqual(args[3], "helm-charts/charts/kubex-automation-stack")
-        self.assertNotIn("--version", args)
-
     def test_unused_subcharts_are_disabled_by_default_and_overridable(self) -> None:
         keys = ["kubex-connector", "kubex-ai-cdi", "kubex-automation-engine", "k8s-ephemeral-storage-metrics"]
         args = template_args("demo", StackSpec(), ForwarderSpec())
@@ -471,6 +466,17 @@ class StackInstallTest(unittest.TestCase):
         with patch.object(stack_mod, "template_args", return_value=["helm", "template", "x"]):
             with self.assertRaisesRegex(HarnessError, "does not run kubex-e2e/collector"):
                 self._install(self._scenario())
+
+    def test_local_chart_directory_is_rendered_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as chart:
+            (Path(chart) / "Chart.yaml").write_text("name: kubex-automation-stack\nversion: 1.1.29\n")
+            calls, versions, _ = self._install(self._scenario(), chart_version=chart)
+        self.assertIn(["helm", "dependency", "update", chart], calls)
+        self.assertFalse(any(c[:2] == ["helm", "repo"] or c[:2] == ["helm", "search"] for c in calls))
+        for args in (c for c in calls if c[:2] == ["helm", "template"]):
+            self.assertEqual(args[3], chart)
+            self.assertNotIn("--version", args)
+        self.assertEqual(versions["chart_version"], "1.1.29")
 
     def test_explicit_chart_version_wins_over_search(self) -> None:
         calls, versions, _ = self._install(self._scenario(), chart_version="1.1.10")

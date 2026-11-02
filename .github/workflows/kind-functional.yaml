@@ -22,6 +22,11 @@ on:
         required: false
         type: string
         default: ""
+      helm_charts_ref:
+        description: Branch or commit of densify-dev/helm-charts to test the unreleased chart from (overrides stack_chart_version)
+        required: false
+        type: string
+        default: ""
 
 concurrency:
   group: kind-functional-${{ github.ref }}
@@ -32,9 +37,6 @@ permissions:
 
 env:
   HELM_VERSION: v4.2.4
-  HELM_CHARTS_REPOSITORY: densify-dev/helm-charts
-  HELM_CHARTS_REF: 9881b834bf3c4c1a80e6400d6e1946a13722f0c0
-  HELM_CHART_PATH: helm-charts/charts/kubex-automation-stack
 
 jobs:
   # Versions are resolved once so every scenario leg tests the same chart and collector digest.
@@ -47,18 +49,19 @@ jobs:
       collector_image: ${{ steps.versions.outputs.collector_image }}
       scenarios: ${{ steps.scenarios.outputs.scenarios }}
     env:
-      CHART_OVERRIDE: ${{ inputs.stack_chart_version }}
+      CHART_OVERRIDE: ${{ inputs.helm_charts_ref && 'helm-charts/charts/kubex-automation-stack' || inputs.stack_chart_version }}
       COLLECTOR_OVERRIDE: ${{ inputs.collector_image }}
       SCENARIO: ${{ inputs.scenario }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Check out Helm chart source
+      - name: Check out the chart branch
+        if: inputs.helm_charts_ref != ''
         uses: actions/checkout@v7
         with:
-          repository: ${{ env.HELM_CHARTS_REPOSITORY }}
-          ref: ${{ env.HELM_CHARTS_REF }}
+          repository: densify-dev/helm-charts
+          ref: ${{ inputs.helm_charts_ref }}
           path: helm-charts
 
       - name: Set up Helm
@@ -66,21 +69,11 @@ jobs:
         with:
           version: ${{ env.HELM_VERSION }}
 
-      - name: Add Helm dependency repositories
-        run: |
-          helm repo add kubex https://densify-dev.github.io/helm-charts
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-          helm repo add grafana https://grafana.github.io/helm-charts
-          helm repo update
-
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
-
-      - name: Build Helm chart dependencies
-        run: helm dependency build "${HELM_CHART_PATH}"
 
       - name: Install Python dependencies
         run: python3 -m pip install -r requirements.txt
@@ -88,7 +81,7 @@ jobs:
       - name: Resolve chart and collector
         id: versions
         run: |
-          resolved="$(python3 -m scripts.resolve_versions "${CHART_OVERRIDE}" "${HELM_CHART_PATH}")"
+          resolved="$(python3 -m scripts.resolve_versions "${CHART_OVERRIDE}")"
           version="$(sed -n 's/^chart_version=//p' <<<"${resolved}")"
           image="${COLLECTOR_OVERRIDE:-$(sed -n 's/^collector_image=//p' <<<"${resolved}")}"
           digest="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
@@ -148,11 +141,12 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v7
 
-      - name: Check out Helm chart source
+      - name: Check out the chart branch
+        if: inputs.helm_charts_ref != ''
         uses: actions/checkout@v7
         with:
-          repository: ${{ env.HELM_CHARTS_REPOSITORY }}
-          ref: ${{ env.HELM_CHARTS_REF }}
+          repository: densify-dev/helm-charts
+          ref: ${{ inputs.helm_charts_ref }}
           path: helm-charts
 
       - name: Set up Python
@@ -168,16 +162,6 @@ jobs:
         uses: azure/setup-helm@v5
         with:
           version: ${{ env.HELM_VERSION }}
-
-      - name: Add Helm dependency repositories
-        run: |
-          helm repo add kubex https://densify-dev.github.io/helm-charts
-          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
-          helm repo add grafana https://grafana.github.io/helm-charts
-          helm repo update
-
-      - name: Build Helm chart dependencies
-        run: helm dependency build "${HELM_CHART_PATH}"
 
       - name: Install Kind
         run: |
@@ -200,7 +184,6 @@ jobs:
           python3 -m pytest "scenarios/${SCENARIO}" -v --tb=short -o verbosity_assertions=0 \
             --junitxml="artifacts/kind-functional/${SCENARIO}/pytest.xml" \
             --stack-chart-version "${CHART_VERSION}" \
-            --stack-chart-path "${HELM_CHART_PATH}" \
             --collector-image "${COLLECTOR_IMAGE}"
 
       - name: Upload scenario artifact

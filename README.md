@@ -67,6 +67,7 @@ gh workflow run kind-functional.yaml --ref <branch> \
 | `scenario` | blank: every directory under `scenarios/` |
 | `stack_chart_version` | blank: latest stable chart |
 | `collector_image` | blank: the chart's default collector |
+| `helm_charts_ref` | blank: the published chart. A branch, tag or commit of `densify-dev/helm-charts` renders that checkout's `kubex-automation-stack` instead, e.g. `-f helm_charts_ref=chore/update-external-deps` |
 
 ## Reading a red run
 

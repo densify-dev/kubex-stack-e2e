@@ -131,7 +131,7 @@ After any inventory change:
 
 | What | Where | Default |
 | --- | --- | --- |
-| Chart | `--stack-chart-version`, CI input `stack_chart_version` | the latest stable version |
+| Chart | `--stack-chart-version` (a version, or a local chart directory); CI inputs `stack_chart_version` or `helm_charts_ref` (a helm-charts branch, tag or commit) | the latest stable version |
 | Collector | `--collector-image`, CI input `collector_image` | the chart's default image |
 | Kind node image | `KIND_NODE_IMAGE` in [`harness/versions.py`](../harness/versions.py) (by digest). Keep `KUBECTL_VERSION` in the workflow on the same Kubernetes minor. | pinned |
 | Fixture and helper image | `FIXTURE_IMAGE` in `versions.py`, plus the same digest written into some `workload.yaml` files (grep for it) | pinned |
@@ -140,6 +140,19 @@ After any inventory change:
 
 To test an unreleased collector, dispatch CI with `collector_image`, or pass `--collector-image` locally.
 Do not edit the spec.
+
+To test an unreleased chart, for example a branch that bumps Prometheus, dispatch CI from any
+helm-charts branch, tag or commit:
+
+```sh
+gh workflow run kind-functional.yaml --ref anant/stack-e2e-harness -f helm_charts_ref=<branch-tag-or-sha>
+```
+
+Locally, check out [densify-dev/helm-charts](https://github.com/densify-dev/helm-charts) and pass the
+chart directory: `--stack-chart-version ../helm-charts/charts/kubex-automation-stack`. Either way the
+run summary shows the version from that checkout's `Chart.yaml`, and the collector is the one that
+chart defaults to unless you also set `collector_image`. Compare the failing tests with the latest run on
+the published chart to see what the chart change did.
 
 ## If you change the harness
 
