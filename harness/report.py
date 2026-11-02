@@ -37,8 +37,21 @@ class Scenario:
     passed: int = 0
     failed: int = 0
     failures: list[Failure] = field(default_factory=list)
+    known: list[list] = field(default_factory=list)  # test, file, line, bug IDs, headline
+    xpassed: list[list] = field(default_factory=list)  # node id, bug IDs
     versions: dict[str, str] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.status == "passed"
+
+    @property
+    def label(self) -> str:
+        """The status shown to people: a passing scenario still says how many known bugs it carries."""
+
+        n = len(self.known)
+        return f"passed ({n} known bug{'s' * (n != 1)})" if self.ok and n else self.status
 
     @property
     def setup_errors(self) -> int:
@@ -58,6 +71,9 @@ def load(directory: Path, name: str) -> Scenario:
         scenario.versions = {key: versions[key] for key in ("chart_version", "collector_version") if versions.get(key)}
     if (directory / "failures.json").is_file():
         scenario.failures = [tuple(f) for f in json.loads((directory / "failures.json").read_text(encoding="utf-8"))]
+    if (directory / "known-bugs.json").is_file():
+        found = json.loads((directory / "known-bugs.json").read_text(encoding="utf-8"))
+        scenario.known, scenario.xpassed = found["known"], found["xpassed"]
     scenario.status = "setup error"
     if (directory / "pytest.xml").is_file():
         suite = ET.parse(directory / "pytest.xml").getroot().find("testsuite")
@@ -72,10 +88,11 @@ def load(directory: Path, name: str) -> Scenario:
 def headline(scenarios: Sequence[Scenario]) -> str:
     failed = sum(s.failed for s in scenarios)
     passed = sum(s.passed for s in scenarios)
-    bad = sum(s.status != "passed" for s in scenarios)
-    text = f"{failed} failed, {passed} passed. {bad} of {len(scenarios)} scenarios failed"
-    if missing := sum(s.status == NO_ARTIFACT for s in scenarios):
-        text += f" ({missing} without an artifact)"
+    known = sum(len(s.known) for s in scenarios)
+    text = f"{failed} failed, {passed} passed, {known} known bug{'s' * (known != 1)} in {len(scenarios)} scenarios"
+    if bad := sum(not s.ok for s in scenarios):
+        text += f" ({bad} not passing"
+        text += f", {missing} without an artifact)" if (missing := sum(s.status == NO_ARTIFACT for s in scenarios)) else ")"
     text += "."
     versions = []
     for key, label in (("chart_version", "chart"), ("collector_version", "collector")):
@@ -94,7 +111,7 @@ def markdown(scenarios: Sequence[Scenario], doc_url: str) -> str:
     lines += ["| Scenario | Status | Passed | Failed | Setup errors |", "| --- | --- | --- | --- | --- |"]
     for s in scenarios:
         counts = ("-", "-", "-") if s.status == NO_ARTIFACT else (s.passed, s.failed, s.setup_errors)
-        lines.append(f"| [{s.name}]({doc_url}/{s.name}.md) | {s.status} | {counts[0]} | {counts[1]} | {counts[2]} |")
+        lines.append(f"| [{s.name}]({doc_url}/{s.name}.md) | {s.label} | {counts[0]} | {counts[1]} | {counts[2]} |")
     lines.append("")
     with_failures = [s for s in scenarios if s.failures]
     if with_failures:
@@ -106,6 +123,20 @@ def markdown(scenarios: Sequence[Scenario], doc_url: str) -> str:
             f"<summary><b>{s.name}</b>: {len(s.failures)} failed, {len(groups)} distinct</summary>",
             "",
             *failure_table(groups),
+            "",
+            "</details>",
+            "",
+        ]
+    with_known = [s for s in scenarios if s.known]
+    if with_known:
+        lines += ["## Known bugs", ""]
+    for s in with_known:
+        rows = [(", ".join(bugs), test, headline.replace("|", "\\|")) for test, _, _, bugs, headline in sorted(s.known, key=lambda k: k[3])]
+        lines += [
+            f"<details>\n<summary><b>{s.name}</b>: {len(s.known)} known</summary>\n",
+            "| Bug | Test | Failure |",
+            "| --- | --- | --- |",
+            *(f"| {bug} | {test} | {headline} |" for bug, test, headline in rows),
             "",
             "</details>",
             "",
@@ -128,11 +159,15 @@ def annotations(scenarios: Sequence[Scenario]) -> list[str]:
     groups = [(group, name) for *_, group, name in sorted(ranked, key=lambda item: item[:2])]
     room = ANNOTATION_LIMIT - 1
     shown = groups if len(groups) <= room else groups[: room - 1]
-    level = "error" if any(s.status != "passed" for s in scenarios) else "notice"
+    level = "error" if not all(s.ok for s in scenarios) else "notice"
     result = [f"::{level} title=E2E run summary::{_command_escape(headline(scenarios))}"]
     result += [failure_annotation(group, prefix=f"{name}: ") for group, name in shown]
     if hidden := sum(len(group[1]) for group, _ in groups[len(shown) :]):
         result.append(f"::error title={hidden} more failures::see the run summary")
+    for s in scenarios:
+        for test, bugs in s.xpassed:
+            text = f"{', '.join(bugs)} {test} — remove it from known-bugs.yaml"
+            result.append(f"::notice title=Known bug appears fixed::{_command_escape(text)}")
     if warnings := _warnings(scenarios):
         result.append(workflow_warning(warnings))
     return result

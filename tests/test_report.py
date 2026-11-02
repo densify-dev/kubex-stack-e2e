@@ -26,6 +26,8 @@ def _artifact(
     warnings: tuple[str, ...] = (),
     summary: str | None = None,
     collector: str = "v4.8.0",
+    known: list | None = None,
+    xpassed: list | None = None,
 ) -> None:
     directory = root / f"kind-functional-{name}-1"
     directory.mkdir(parents=True)
@@ -34,6 +36,8 @@ def _artifact(
     (directory / "versions.json").write_text(json.dumps({"chart_version": "1.0", "collector_version": collector}))
     if junit is not None:
         (directory / "pytest.xml").write_text(junit)
+    if known is not None:
+        (directory / "known-bugs.json").write_text(json.dumps({"known": known, "xpassed": xpassed or []}))
     if failures is not None:
         (directory / "failures.json").write_text(json.dumps(failures))
 
@@ -65,7 +69,7 @@ class ReportTest(unittest.TestCase):
         scenarios = self.load("a", "b", "gone")
         self.assertEqual(
             report.headline(scenarios),
-            "1 failed, 5 passed. 2 of 3 scenarios failed (1 without an artifact)."
+            "1 failed, 5 passed, 0 known bugs in 3 scenarios (2 not passing, 1 without an artifact)."
             " Tested chart 1.0, collector v4.8.0 and v4.9.0 (differs between scenarios).",
         )
 
@@ -107,6 +111,34 @@ class ReportTest(unittest.TestCase):
     def test_a_green_run_is_a_notice_not_an_error(self) -> None:
         _artifact(self.root, "ok", _junit(2))
         self.assertTrue(report.annotations(self.load("ok"))[0].startswith("::notice title=E2E run summary::0 failed, 2 passed"))
+
+    def test_known_bugs_keep_a_scenario_green_and_are_listed(self) -> None:
+        known = [["t1", "f.py", 3, ["B-1", "B-2"], "assert 1 == 2"], ["t2", "f.py", 4, ["B-3"], "a | b"]]
+        _artifact(self.root, "kb", _junit(10, skipped=2), [], known=known, xpassed=[["scenarios/kb/t.py::t3", ["B-9"]]])
+        _artifact(self.root, "red", _junit(5, failures=1), [["t", "f.py", 1, "m"]], known=known[:1])
+        scenarios = self.load("kb", "red")
+        self.assertEqual((scenarios[0].status, scenarios[0].label, scenarios[0].passed), ("passed", "passed (2 known bugs)", 8))
+        self.assertEqual(scenarios[1].label, "failed")
+        self.assertEqual(report.headline(scenarios[:1]), "0 failed, 8 passed, 2 known bugs in 1 scenarios. Tested chart 1.0, collector v4.8.0.")
+        self.assertIn("(1 not passing)", report.headline(scenarios))
+        text = report.markdown(scenarios, "https://x/docs")
+        self.assertIn("| [kb](https://x/docs/kb.md) | passed (2 known bugs) | 8 | 0 | 0 |", text)
+        self.assertIn("<details>\n<summary><b>kb</b>: 2 known</summary>", text)
+        self.assertIn("| B-1, B-2 | t1 | assert 1 == 2 |", text)
+        self.assertIn("| B-3 | t2 | a \\| b |", text)
+        self.assertLess(text.index("## Failed tests"), text.index("## Known bugs"))
+
+    def test_known_bugs_make_no_error_annotations_and_a_fixed_one_is_a_notice(self) -> None:
+        known = [["t1", "f.py", 3, ["B-1"], "m"]]
+        _artifact(self.root, "kb", _junit(10, skipped=1), [], known=known, xpassed=[["scenarios/kb/t.py::t3", ["B-9"]]])
+        result = report.annotations(self.load("kb"))
+        self.assertEqual(
+            result,
+            [
+                "::notice title=E2E run summary::0 failed, 9 passed, 1 known bug in 1 scenarios. Tested chart 1.0, collector v4.8.0.",
+                "::notice title=Known bug appears fixed::B-9 scenarios/kb/t.py::t3 — remove it from known-bugs.yaml",
+            ],
+        )
 
     def test_main_succeeds_when_a_scenario_is_missing(self) -> None:
         _artifact(self.root, "ok", _junit(2))
