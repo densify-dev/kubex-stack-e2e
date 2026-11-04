@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -59,3 +61,15 @@ def test_without_the_option_nothing_changes(session: pytest.Pytester) -> None:
     result = session.runpytest("-p", "no:cacheprovider")
     result.assert_outcomes(passed=1, failed=4, errors=1)
     assert not (session.path / "out" / "known-bugs.json").exists()
+
+
+def test_every_entry_names_a_collected_test() -> None:
+    """A renamed test or parameter would leave an entry that gates nothing."""
+
+    root = Path(__file__).resolve().parents[1]
+    collected = subprocess.run(
+        [sys.executable, "-m", "pytest", "scenarios", "--collect-only", "-q", "-p", "no:cacheprovider"],
+        cwd=root, capture_output=True, text=True, check=True,
+    ).stdout.splitlines()
+    listed = {entry["test"] for entry in yaml.safe_load((root / "known-bugs.yaml").read_text(encoding="utf-8"))}
+    assert sorted(listed - set(collected)) == []

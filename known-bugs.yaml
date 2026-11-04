@@ -13,7 +13,7 @@
   match: actual '', expected '0'
 - test: scenarios/container-resources/test_container_resources.py::test_current_size_series_follow_the_grid
   bugs: [B-08]
-  match: 'container/current_size.csv: identities differ (1 missing, 0 unexpected'
+  match: 'container/current_size.csv: identities differ (1 missing, 0 unexpected; key ClusterName/Namespace/EntityName/EntityType/ContainerName) — missing    container-resources/cr-workload/batch/Job/work'
 - test: scenarios/container-resources/test_container_resources.py::test_namespace_quota_columns[NamespaceCpuLimit]
   bugs: [B-05]
   match: actual '8007', expected '8008'
@@ -127,7 +127,7 @@
   match: actual ['500'], expected ['250']
 - test: scenarios/ksm-replicas/test_ksm_replicas.py::test_container_cpu_request_series
   bugs: [B-26]
-  match: identities differ (0 missing, 1 unexpected
+  match: 'container/cpu_request.csv: identities differ (0 missing, 1 unexpected; key ClusterName/Namespace/EntityName/EntityType/ContainerName) — unexpected ksm-replicas/ksmr-workload/done/Job/work'
 - test: scenarios/ksm-replicas/test_ksm_replicas.py::test_power_state[done-work]
   bugs: [B-26]
   match: actual ['Running'], expected ['Terminated']
@@ -229,13 +229,13 @@
   match: archive has no file 'node/memory_ws_utilization.csv'
 - test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_attribute_labels[control-plane]
   bugs: [E-3]
-  match: 'shared labels missing or wrong:'
+  match: shared labels missing or wrong (0 collected)
 - test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_attribute_labels[gpu]
   bugs: [E-3]
-  match: 'shared labels missing or wrong:'
+  match: shared labels missing or wrong (0 collected)
 - test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_attribute_labels[infra]
   bugs: [E-3]
-  match: 'shared labels missing or wrong:'
+  match: shared labels missing or wrong (0 collected)
 - test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_config_os_and_model[control-plane]
   bugs: [E-3]
   match: assert actual ('', ''), expected ('linux', 'e2e.control-plane')

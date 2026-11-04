@@ -322,4 +322,4 @@ def test_attribute_labels(archive, oracle, group):
 
     collected = label_map(_row(archive, "node_group/attributes.csv", group)["NodeLabels"])
     missing = {k: v for k, v in _shared_labels(oracle, group).items() if collected.get(k) != v}
-    assert not missing, f"shared labels missing or wrong: {missing}"
+    assert not missing, f"shared labels missing or wrong ({len(collected)} collected): {missing}"
