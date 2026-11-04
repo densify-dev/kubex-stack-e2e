@@ -1,0 +1,46 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ephemeral-storage-workload
+---
+# One replica, so the pod name eph-0 is known before the pod exists and the fixture can name it.
+# Two containers with their own ephemeral requests and limits, one volume each and one shared volume.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: eph
+  namespace: ephemeral-storage-workload
+spec:
+  serviceName: eph
+  replicas: 1
+  selector:
+    matchLabels: {app: eph}
+  template:
+    metadata:
+      labels: {app: eph}
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: kubex-e2e-ephemeral-storage-worker
+      containers:
+        - name: c1
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests: {ephemeral-storage: 100Mi}
+            limits: {ephemeral-storage: 200Mi}
+          volumeMounts:
+            - {name: u1, mountPath: /u1}
+            - {name: shared, mountPath: /shared}
+        - name: c2
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests: {ephemeral-storage: 300Mi}
+            limits: {ephemeral-storage: 500Mi}
+          volumeMounts:
+            - {name: u2, mountPath: /u2}
+            - {name: shared, mountPath: /shared}
+      volumes:
+        - {name: u1, emptyDir: {}}
+        - {name: u2, emptyDir: {}}
+        - {name: shared, emptyDir: {}}

@@ -1,0 +1,66 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nodegroup-roles-workload
+---
+# One pod per worker with its own requests and limits, so every group's sums differ and a group
+# that picked up the wrong node (or a node count instead of a sum) cannot match by accident.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: on-worker
+  namespace: nodegroup-roles-workload
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: kubex-e2e-nodegroup-roles-worker
+  containers:
+    - name: workload
+      image: registry.k8s.io/pause:3.9
+      imagePullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 250m
+          memory: 192Mi
+        limits:
+          cpu: 700m
+          memory: 384Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: on-worker2
+  namespace: nodegroup-roles-workload
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: kubex-e2e-nodegroup-roles-worker2
+  containers:
+    - name: workload
+      image: registry.k8s.io/pause:3.9
+      imagePullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 400m
+          memory: 320Mi
+        limits:
+          cpu: 900m
+          memory: 640Mi
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: on-worker3
+  namespace: nodegroup-roles-workload
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: kubex-e2e-nodegroup-roles-worker3
+  containers:
+    - name: workload
+      image: registry.k8s.io/pause:3.9
+      imagePullPolicy: IfNotPresent
+      resources:
+        requests:
+          cpu: 600m
+          memory: 448Mi
+        limits:
+          cpu: 1200m
+          memory: 896Mi

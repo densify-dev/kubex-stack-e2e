@@ -1,0 +1,229 @@
+name: kind-functional
+
+on:
+  push:
+    branches:
+      - anant/stack-e2e-harness
+      - main
+  # The chart is unpinned, so a nightly run catches a chart or collector release that breaks collection.
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: Scenario directory under scenarios/ (blank runs all)
+        required: false
+        type: string
+        default: ""
+      stack_chart_version:
+        description: Chart version override (blank uses the latest stable)
+        required: false
+        type: string
+        default: ""
+      collector_image:
+        description: Collector image override (blank uses the chart default)
+        required: false
+        type: string
+        default: ""
+      helm_charts_ref:
+        description: Branch or commit of densify-dev/helm-charts to test the unreleased chart from (overrides stack_chart_version)
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: kind-functional-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  HELM_VERSION: v4.2.4
+
+jobs:
+  # Versions are resolved once so every scenario leg tests the same chart and collector digest.
+  resolve:
+    name: Resolve versions
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      chart_version: ${{ steps.versions.outputs.chart_version }}
+      collector_image: ${{ steps.versions.outputs.collector_image }}
+      scenarios: ${{ steps.scenarios.outputs.scenarios }}
+    env:
+      CHART_OVERRIDE: ${{ inputs.helm_charts_ref && 'helm-charts/charts/kubex-automation-stack' || inputs.stack_chart_version }}
+      COLLECTOR_OVERRIDE: ${{ inputs.collector_image }}
+      SCENARIO: ${{ inputs.scenario }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check out the chart branch
+        if: inputs.helm_charts_ref != ''
+        uses: actions/checkout@v7
+        with:
+          repository: densify-dev/helm-charts
+          ref: ${{ inputs.helm_charts_ref }}
+          path: helm-charts
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Resolve chart and collector
+        id: versions
+        run: |
+          resolved="$(python3 -m scripts.resolve_versions "${CHART_OVERRIDE}")"
+          version="$(sed -n 's/^chart_version=//p' <<<"${resolved}")"
+          image="${COLLECTOR_OVERRIDE:-$(sed -n 's/^collector_image=//p' <<<"${resolved}")}"
+          digest="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
+          echo "chart_version=${version}" >> "${GITHUB_OUTPUT}"
+          # name:tag@digest: the tag stays for people, the digest decides what runs.
+          echo "collector_image=${image%@*}@${digest}" >> "${GITHUB_OUTPUT}"
+
+      - name: List scenarios
+        id: scenarios
+        run: |
+          if [[ -n "${SCENARIO}" ]]; then
+            test -d "scenarios/${SCENARIO}"
+            echo "scenarios=$(jq -cn --arg s "${SCENARIO}" '[$s]')" >> "${GITHUB_OUTPUT}"
+          else
+            echo "scenarios=$(find scenarios -mindepth 1 -maxdepth 1 -type d ! -name '__*' -printf '%f\n' | sort | jq -Rcs 'split("\n") | map(select(length > 0))')" >> "${GITHUB_OUTPUT}"
+          fi
+
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Run unit tests
+        run: python3 -m pytest tests -q
+
+  scenario:
+    name: ${{ matrix.scenario }}
+    needs: [resolve, unit-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 11
+      matrix:
+        scenario: ${{ fromJSON(needs.resolve.outputs.scenarios) }}
+    env:
+      KIND_VERSION: v0.33.0
+      KIND_SHA256: aee6151561422756b764a4ae28e7f44cda5af5a9eead3cc9985112b1de8d8e0d
+      # Matches the Kubernetes version of the default node image.
+      KUBECTL_VERSION: v1.37.0
+      KUBECTL_SHA256: 6129359f4e1f3848a5572ccb0b26cf28b8ca08cef38c95a765b2f64a2c961a2f
+      SCENARIO: ${{ matrix.scenario }}
+      CHART_VERSION: ${{ needs.resolve.outputs.chart_version }}
+      COLLECTOR_IMAGE: ${{ needs.resolve.outputs.collector_image }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Check out the chart branch
+        if: inputs.helm_charts_ref != ''
+        uses: actions/checkout@v7
+        with:
+          repository: densify-dev/helm-charts
+          ref: ${{ inputs.helm_charts_ref }}
+          path: helm-charts
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install Python dependencies
+        run: python3 -m pip install -r requirements.txt
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v5
+        with:
+          version: ${{ env.HELM_VERSION }}
+
+      - name: Install Kind
+        run: |
+          curl -fsSLo kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          printf '%s  %s\n' "${KIND_SHA256}" kind | sha256sum --check
+          sudo install kind /usr/local/bin/kind
+
+      - name: Install kubectl
+        run: |
+          curl -fsSLo kubectl "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/amd64/kubectl"
+          printf '%s  %s\n' "${KUBECTL_SHA256}" kubectl | sha256sum --check
+          sudo install kubectl /usr/local/bin/kubectl
+          kubectl version --client
+
+      # The report job writes the only job summary and every annotation of the run.
+      - name: Run functional scenario
+        env:
+          FAILURES_JSON: artifacts/kind-functional/${{ matrix.scenario }}/failures.json
+        run: |
+          python3 -m pytest "scenarios/${SCENARIO}" -v --tb=short -o verbosity_assertions=0 \
+            --junitxml="artifacts/kind-functional/${SCENARIO}/pytest.xml" \
+            --stack-chart-version "${CHART_VERSION}" \
+            --collector-image "${COLLECTOR_IMAGE}" \
+            --known-bugs known-bugs.yaml
+
+      - name: Upload scenario artifact
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: kind-functional-${{ matrix.scenario }}-${{ github.run_id }}
+          path: artifacts/kind-functional/${{ matrix.scenario }}
+          if-no-files-found: warn
+          retention-days: 14
+
+  # Finishes last, so its annotations and summary are the first things on the run page. It goes red only
+  # if the roll-up itself breaks.
+  report:
+    name: Run summary
+    needs: [resolve, scenario]
+    if: ${{ !cancelled() && needs.scenario.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SCENARIOS: ${{ needs.resolve.outputs.scenarios }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Download scenario artifacts
+        uses: actions/download-artifact@v8
+        with:
+          pattern: kind-functional-*-${{ github.run_id }}
+          path: artifacts
+
+      - name: Write run summary
+        run: |
+          mapfile -t scenarios < <(jq -r '.[]' <<<"${SCENARIOS}")
+          python3 -m harness.report artifacts "${scenarios[@]}"

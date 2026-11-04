@@ -1,50 +1,118 @@
 # Kubex Stack E2E
 
-This repository runs an end-to-end validation of the Kubex Automation Stack
-and its Prometheus data forwarder.
+End-to-end tests for the Kubex Automation Stack's data collector. This page is for developers who run
+the tests, read their results, or change them.
 
-## Workflow
+Each scenario creates a Kind cluster with a known shape and installs the stack with Helm. It then
+captures the CSV archive the collector uploads and checks every value against what Kubernetes or a
+fixture says is true. Scenarios are pytest modules under [`scenarios/`](scenarios/). The harness that
+runs them is under [`harness/`](harness/).
 
-The `stack-validation` workflow runs on pushes to `main`, nightly at 02:00 UTC,
-and manual dispatches. It:
-
-1. Creates a kind-backed KWOK cluster with a real control-plane node.
-2. Resolves and records the latest published Kubex Automation Stack chart, then deploys a fake upload server and the stack with Beyla enabled.
-3. Creates a real-node resource fixture for cAdvisor and node-exporter data.
-4. Scales to 100 simulated KWOK nodes.
-5. Applies 25 Deployments, 25 StatefulSets, 10 CronJobs, and one DaemonSet.
-6. Runs Go, Java, Node.js, Python, and .NET HTTP applications on the real node and sends traffic to them.
-7. Checks Beyla's runtime survey data in Prometheus for all five applications.
-8. Waits for 30 minutes of Prometheus history, runs the data forwarder, and validates the uploaded CSV archive.
-
-The workflow summary reports upload status and row counts for the required
-cluster, node, and container CSVs. It also records the exact chart version and
-Beyla runtime detection results. The complete diagnostic and CSV output is
-available in the `stack-validation-${run_id}` artifact.
-
-## Local Tests
-
-Run the unit tests with:
-
-```text
-python3 -m unittest discover -s tests
+```mermaid
+flowchart LR
+  subgraph kind["Kind cluster (one per scenario)"]
+    W["workloads + fixture exporters"] --> P["Prometheus"]
+    P --> C["collector Job (data forwarder)"]
+    C -- "archive upload" --> R["fake upload receiver"]
+  end
+  H["pytest harness"] -- "helm template + kubectl apply" --> kind
+  R -- "captured archive" --> H
+  kind -- "kubectl snapshots" --> H
+  H --> A["artifacts/"]
 ```
 
-The generated workloads target nodes labeled `type=kwok` and include resource
-requests and limits. KWOK nodes provide Kubernetes inventory and scheduling
-metrics through kube-state-metrics, but do not run real node-exporter or
-cAdvisor processes. The real control-plane fixture supplies those usage
-metrics.
+## Quickstart
 
-## Fixed Test Versions
+You need Docker, `kind`, `kubectl`, `helm` and Python 3. CI pins the exact versions in
+[`.github/workflows/kind-functional.yaml`](.github/workflows/kind-functional.yaml).
 
-- Kubex Automation Stack Helm chart: latest published version at run time, recorded in the artifact
-- KWOK: `v0.5.1`
-- Kubernetes: `v1.30.0`
-- Helm: `v3.16.3`
+```sh
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python -m pytest tests -q                                   # unit tests, no cluster
+.venv/bin/python -m pytest scenarios/node-pressure -v --tb=short      # one scenario, live Kind cluster
+```
 
-The workflow intentionally does not pin the automation-stack chart. It resolves
-the newest chart from the Kubex Helm repository at the start of each run and
-stores the selected chart metadata in the artifact. This keeps the test aligned
-with the chart that customers receive, while leaving a precise record when a
-chart changes.
+Scenario run options (defined in [`conftest.py`](conftest.py)):
+
+| Option | Effect |
+| --- | --- |
+| `--collector-image IMAGE` | Collector to test. Default: the chart's default image. |
+| `--stack-chart-version X.Y.Z` | Chart version. Default: the latest stable version. |
+| `--known-bugs FILE` | Report the failures listed in `known-bugs.yaml` as xfail. CI passes it; local runs and replay do not. |
+| `--replay DIR` | Re-run the assertions against a previous run's artifact directory. No cluster is created. |
+| `--keep-cluster` | Leave the Kind cluster running after the run. The run uses its own kubeconfig, so get the context with `kind export kubeconfig --name kubex-e2e-<scenario>`. |
+| `--artifacts-root DIR` | Where artifacts go. Default: `artifacts/kind-functional`. |
+
+### Replay a run
+
+Replay rebuilds the run from saved artifacts and runs the tests in under a second. Use it to debug a
+red CI run or to iterate on an assertion.
+
+```sh
+gh run download <run-id> -n kind-functional-<scenario>-<run-id> -D /tmp/<scenario>
+.venv/bin/python -m pytest scenarios/<scenario> --replay /tmp/<scenario> -q --tb=short
+```
+
+### Run in CI
+
+The `kind-functional` workflow runs on pushes to `main` and `anant/stack-e2e-harness`, nightly and on manual dispatch:
+
+```sh
+gh workflow run kind-functional.yaml --ref <branch> \
+  -f scenario=container-resources \
+  -f stack_chart_version= -f collector_image=densify/container-optimization-data-forwarder:<tag>
+```
+
+| Input | Default |
+| --- | --- |
+| `scenario` | blank: every directory under `scenarios/` |
+| `stack_chart_version` | blank: latest stable chart |
+| `collector_image` | blank: the chart's default collector |
+| `helm_charts_ref` | blank: the published chart. A branch, tag or commit of `densify-dev/helm-charts` renders that checkout's `kubex-automation-stack` instead, e.g. `-f helm_charts_ref=chore/update-external-deps` |
+
+## Reading a run
+
+Collector defects that are known but not yet fixed are listed in [`known-bugs.yaml`](known-bugs.yaml),
+and CI runs with `--known-bugs`. A listed test that fails with the listed message is a **known bug**: it
+does not turn the job red. A scenario with only known bugs shows `passed (N known bugs)`, the headline
+counts them (`0 failed, 621 passed, 82 known bugs in 11 scenarios`), and each scenario has a collapsible
+**Known bugs** table of bug ID, test and failure. Any other failure still turns the run red. When a
+listed test passes, the run stays green and a notice says **Known bug appears fixed**: remove its entry.
+Locally, without `--known-bugs`, every known bug is an ordinary red test.
+
+### Reading a red run
+
+Start at the run page. The `Run summary` job finishes last and owns it: the annotations box lists an
+**E2E run summary** headline (failed and passed counts, chart and collector versions) and one
+failure group per scenario, each pointing at the failing line. Below it, the job summary has one row per scenario
+(status, passed, failed, setup errors, a link to its doc) and a collapsible failure table per scenario.
+Scenario jobs stay red but write no summary. Their artifact still holds `summary.md` and `failures.json`.
+GitHub adds its own "Process completed with exit code 1" error for each red scenario job. The report job
+stays green when it wrote the summary, so a red run means at least one scenario job is red. The prefix of a failure tells you whose problem it is:
+
+| You see | Meaning | What to do |
+| --- | --- | --- |
+| A plain assertion headline, e.g. `node/cpu_request.csv ... at <time> — assert actual 1500.0, expected 1250.0` | The collector disagrees with Kubernetes or fixture truth. This is a collector finding. | Replay, read the test's truth source, confirm, then report it against the collector. Do not change the test to match. |
+| `[setup error] ...` | The run never reached the tests: cluster, Helm, Prometheus readiness or the forwarder Job failed. | Check `summary.md` and `diagnostics/` in the artifact. |
+| `[call error] ...` | A test raised something other than an assertion, such as a `KeyError` or `OracleDrift` (the cluster changed during the window). | Treat it as a harness or test bug, or as an unstable cluster. |
+| Warning **Coverage review needed** | The collector emitted a CSV or column that the [coverage inventory](harness/coverage.py) does not list. | Classify it. See [docs/extending.md](docs/extending.md#update-the-coverage-inventory). |
+| `archive differs from the coverage inventory` | A known column was lost, renamed or reordered. | This is an error. Confirm the change in the collector first. |
+
+## Documentation
+
+| Doc | Read it to |
+| --- | --- |
+| [docs/architecture.md](docs/architecture.md) | Understand the data flow, the run lifecycle, the artifacts, replay, the coverage inventory, the CI matrix and what the suite does not prove. |
+| [docs/scenarios/README.md](docs/scenarios/README.md) | See what each scenario proves, at a glance. |
+| [docs/scenarios/container-resources.md](docs/scenarios/container-resources.md) | Read a full scenario walkthrough (the exemplar). |
+| [docs/scenarios/_template.md](docs/scenarios/_template.md) | Write a doc for a new scenario. |
+| [docs/extending.md](docs/extending.md) | Add a scenario, test or fixture, update the inventory, bump versions. |
+| [AGENTS.md](AGENTS.md) | Conventions and context tips for coding agents (also useful for humans). |
+
+## Legacy stack-validation workflow
+
+[`stack-validation.yml`](.github/workflows/stack-validation.yml) is an older, separate KWOK load check: 100
+simulated nodes, a 30-minute soak and Beyla runtime detection for five languages, against the latest published
+chart. It runs on pushes to `main`, nightly at 02:00 UTC and on manual dispatch, and writes a
+`stack-validation-<run-id>` artifact. It shares the fake receiver with the harness. Its unit tests run with
+`python3 -m unittest tests.test_stack_validation`.
