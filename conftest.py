@@ -40,7 +40,7 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         default=None,
         help="known-bugs.yaml: listed assertion failures with a matching message are reported as xfail (CI only)",
     )
-    group.addoption("--keep-cluster", action="store_true", help="leave the Kind cluster running")
+    group.addoption("--keep-cluster", action="store_true", help="leave the Kind cluster running; reach it with kind export kubeconfig --name <cluster>")
     group.addoption(
         "--artifacts-root",
         default="artifacts/kind-functional",

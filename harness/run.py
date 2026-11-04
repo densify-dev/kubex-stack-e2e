@@ -7,12 +7,15 @@ through archive capture happens here; assertions happen in the scenario module.
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
+from unittest.mock import patch
 
 from harness import artifacts as artifacts_mod
 from harness import cluster, fixtures, prometheus, receiver, stack
@@ -131,7 +134,18 @@ def _cleanup_owned_cluster(
 
 
 @contextmanager
-def execute(
+def execute(*args: Any, **kwargs: Any) -> Iterator[Run]:
+    """Run the lifecycle against a private kubeconfig.
+
+    kind writes the new context there, not to the user's kubeconfig, and every kubectl and helm call
+    inherits it, so switching contexts or starting another local run cannot redirect this one.
+    """
+
+    with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"KUBECONFIG": f"{tmp}/kubeconfig"}):
+        yield from _lifecycle(*args, **kwargs)
+
+
+def _lifecycle(
     scenario: ScenarioSpec,
     scenario_dir: Path,
     repo_root: Path,
@@ -145,6 +159,7 @@ def execute(
     artifacts = artifacts_mod.prepare(artifacts_root, scenario.name)
     cluster_name = scenario.cluster_name
     created = False
+    collected = False
     failed = False
     job_name: str | None = None
     versions: dict[str, Any] = dict.fromkeys(VERSION_FIELDS)
@@ -194,6 +209,7 @@ def execute(
             job_failures=job_failures,
         )
         _write_replay_inputs(artifacts, run)
+        collected = True
         yield run
 
         # Runs after the tests, whether they passed or failed: a generator fixture is always resumed for teardown.
@@ -210,7 +226,8 @@ def execute(
         )
     except Exception as exc:
         failed = True
-        artifacts_mod.summary(artifacts, scenario.name, "setup failed", versions, error=str(exc))
+        status = "collected, then teardown failed" if collected else "setup failed"
+        artifacts_mod.summary(artifacts, scenario.name, status, versions, error=str(exc))
         raise
     finally:
         write_json(artifacts / "versions.json", versions)

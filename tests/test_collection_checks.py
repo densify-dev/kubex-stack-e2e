@@ -177,7 +177,12 @@ class AuditTimeTest(unittest.TestCase):
             "status": {
                 "phase": "Succeeded",
                 "containerStatuses": [
-                    {"state": {"terminated": {"startedAt": "2026-10-22T13:39:48Z", "finishedAt": "2026-10-22T13:40:02Z"}}}
+                    # A sidecar listed first must not be mistaken for the forwarder.
+                    {"image": "istio/proxyv2:1", "state": {"terminated": {"startedAt": "2026-10-22T13:30:00Z", "finishedAt": "2026-10-22T13:31:00Z"}}},
+                    {
+                        "image": "docker.io/kubex-e2e/collector:abc",
+                        "state": {"terminated": {"startedAt": "2026-10-22T13:39:48Z", "finishedAt": "2026-10-22T13:40:02Z"}},
+                    },
                 ],
             },
         }

@@ -11,6 +11,7 @@ from datetime import datetime
 from harness.archive import assert_log_clean
 from harness.coverage import INVENTORY, check_archive
 from harness.spec import INTERVAL_SECONDS
+from harness.stack import LOCAL_COLLECTOR
 
 __all__ = [
     "test_single_upload",
@@ -66,7 +67,7 @@ def test_audit_time_is_when_the_forwarder_ran(run):
         if p["metadata"].get("labels", {}).get("job-name") == run.job_name and p["status"]["phase"] == "Succeeded"
     ]
     assert len(pods) == 1, f"expected one finished pod of Job {run.job_name}, found {len(pods)}"
-    ran = pods[0]["status"]["containerStatuses"][0]["state"]["terminated"]
+    [ran] = [s["state"]["terminated"] for s in pods[0]["status"]["containerStatuses"] if LOCAL_COLLECTOR in s["image"]]
     audit_time = run.archive.csv("cluster/config.csv").one()["AuditTime"]
     assert floored(ran["startedAt"]) <= floored(audit_time) <= floored(ran["finishedAt"]), (
         f"AuditTime {audit_time} is outside the forwarder run {ran['startedAt']} to {ran['finishedAt']}"

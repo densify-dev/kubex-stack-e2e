@@ -52,7 +52,8 @@ scenario tests, which read only the `Run`.
 
 `execute()` in [`harness/run.py`](../harness/run.py) runs once per scenario module. The module-scoped
 `run` fixture in [`conftest.py`](../conftest.py) enters it, the module's tests share the result, and
-teardown always runs.
+teardown always runs. It sets `KUBECONFIG` to a temporary file, so kind, kubectl and helm only ever see
+the scenario's own cluster, never the user's current context.
 
 ```mermaid
 flowchart TD

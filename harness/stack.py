@@ -25,6 +25,7 @@ CHART = "kubex/kubex-automation-stack"
 REPOSITORY = "https://densify-dev.github.io/helm-charts"
 RELEASE_NAME = "kubex"
 _FORWARDER = "container-optimization-data-forwarder"
+LOCAL_COLLECTOR = "kubex-e2e/collector"  # repository of the preloaded collector tag
 _STABLE_SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
 
@@ -129,7 +130,7 @@ def preload_collector(image: str, cluster_name: str, repo_root: Path, versions: 
     if not info["RepoDigests"]:
         raise HarnessError(f"docker image {image} has no repo digest")
     digest = versions["collector_image_digest"] = info["RepoDigests"][0]
-    local = f"kubex-e2e/collector:{digest.split('sha256:')[-1][:12]}"
+    local = f"{LOCAL_COLLECTOR}:{digest.split('sha256:')[-1][:12]}"
     run(["docker", "tag", image, local], cwd=repo_root)
     with tempfile.TemporaryDirectory() as directory:
         archive = str(Path(directory) / "collector.tar")
