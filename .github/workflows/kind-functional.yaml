@@ -5,6 +5,9 @@ on:
     branches:
       - anant/stack-e2e-harness
       - main
+  # The chart is unpinned, so a nightly run catches a chart or collector release that breaks collection.
+  schedule:
+    - cron: "0 3 * * *"
   workflow_dispatch:
     inputs:
       scenario:
@@ -73,7 +76,6 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-          cache: pip
 
       - name: Install Python dependencies
         run: python3 -m pip install -r requirements.txt
@@ -86,7 +88,8 @@ jobs:
           image="${COLLECTOR_OVERRIDE:-$(sed -n 's/^collector_image=//p' <<<"${resolved}")}"
           digest="$(docker buildx imagetools inspect "${image}" --format '{{json .Manifest.Digest}}' | tr -d '"')"
           echo "chart_version=${version}" >> "${GITHUB_OUTPUT}"
-          echo "collector_image=${image%%[:@]*}@${digest}" >> "${GITHUB_OUTPUT}"
+          # name:tag@digest: the tag stays for people, the digest decides what runs.
+          echo "collector_image=${image%@*}@${digest}" >> "${GITHUB_OUTPUT}"
 
       - name: List scenarios
         id: scenarios
@@ -153,7 +156,6 @@ jobs:
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
-          cache: pip
 
       - name: Install Python dependencies
         run: python3 -m pip install -r requirements.txt

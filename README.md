@@ -40,7 +40,7 @@ Scenario run options (defined in [`conftest.py`](conftest.py)):
 | `--stack-chart-version X.Y.Z` | Chart version. Default: the latest stable version. |
 | `--known-bugs FILE` | Report the failures listed in `known-bugs.yaml` as xfail. CI passes it; local runs and replay do not. |
 | `--replay DIR` | Re-run the assertions against a previous run's artifact directory. No cluster is created. |
-| `--keep-cluster` | Leave the Kind cluster running after the run. |
+| `--keep-cluster` | Leave the Kind cluster running after the run. The run uses its own kubeconfig, so get the context with `kind export kubeconfig --name kubex-e2e-<scenario>`. |
 | `--artifacts-root DIR` | Where artifacts go. Default: `artifacts/kind-functional`. |
 
 ### Replay a run
@@ -55,7 +55,7 @@ gh run download <run-id> -n kind-functional-<scenario>-<run-id> -D /tmp/<scenari
 
 ### Run in CI
 
-The `kind-functional` workflow runs on pushes to `main` and `anant/stack-e2e-harness` and on manual dispatch:
+The `kind-functional` workflow runs on pushes to `main` and `anant/stack-e2e-harness`, nightly and on manual dispatch:
 
 ```sh
 gh workflow run kind-functional.yaml --ref <branch> \
@@ -75,7 +75,7 @@ gh workflow run kind-functional.yaml --ref <branch> \
 Collector defects that are known but not yet fixed are listed in [`known-bugs.yaml`](known-bugs.yaml),
 and CI runs with `--known-bugs`. A listed test that fails with the listed message is a **known bug**: it
 does not turn the job red. A scenario with only known bugs shows `passed (N known bugs)`, the headline
-counts them (`0 failed, 620 passed, 82 known bugs in 11 scenarios`), and each scenario has a collapsible
+counts them (`0 failed, 621 passed, 82 known bugs in 11 scenarios`), and each scenario has a collapsible
 **Known bugs** table of bug ID, test and failure. Any other failure still turns the run red. When a
 listed test passes, the run stays green and a notice says **Known bug appears fixed**: remove its entry.
 Locally, without `--known-bugs`, every known bug is an ordinary red test.

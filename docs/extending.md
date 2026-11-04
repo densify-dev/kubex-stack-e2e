@@ -145,7 +145,7 @@ To test an unreleased chart, for example a branch that bumps Prometheus, dispatc
 helm-charts branch, tag or commit:
 
 ```sh
-gh workflow run kind-functional.yaml --ref anant/stack-e2e-harness -f helm_charts_ref=<branch-tag-or-sha>
+gh workflow run kind-functional.yaml --ref <branch> -f helm_charts_ref=<branch-tag-or-sha>
 ```
 
 Locally, check out [densify-dev/helm-charts](https://github.com/densify-dev/helm-charts) and pass the
