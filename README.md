@@ -111,5 +111,8 @@ stays green when it wrote the summary, so a red run means at least one scenario 
 
 ## Legacy stack-validation workflow
 
-[`stack-validation.yml`](.github/workflows/stack-validation.yml) is an older, separate KWOK load check
-(100 simulated nodes, a 30-minute soak, pinned chart `1.0.18`). It shares the fake receiver with the harness.
+[`stack-validation.yml`](.github/workflows/stack-validation.yml) is an older, separate KWOK load check: 100
+simulated nodes, a 30-minute soak and Beyla runtime detection for five languages, against the latest published
+chart. It runs on pushes to `main`, nightly at 02:00 UTC and on manual dispatch, and writes a
+`stack-validation-<run-id>` artifact. It shares the fake receiver with the harness. Its unit tests run with
+`python3 -m unittest tests.test_stack_validation`.

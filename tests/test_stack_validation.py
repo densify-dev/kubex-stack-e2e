@@ -10,11 +10,126 @@ from unittest.mock import MagicMock, patch
 
 from scripts.inject_host_aliases import inject
 from scripts.build_stack_validation_workloads import build
-from scripts.summarize_stack_validation import summarize
+from scripts.build_runtime_fixtures import RUNTIMES, build as build_runtime_fixtures
+from scripts.resolve_stack_chart import select_latest
+from scripts.summarize_stack_validation import collection_results, summarize
 from scripts.validate_stack_upload import _load_state, main as validate_main
+from scripts.validate_beyla_runtime import validate
+from scripts.validate_prometheus_metrics import validate as validate_prometheus
+from scripts.validate_cluster_metric_consistency import validate as validate_cluster_metrics
 
 
 class StackValidationHelpersTest(unittest.TestCase):
+    def test_runtime_fixtures_cover_required_runtimes_and_real_node(self) -> None:
+        rendered = build_runtime_fixtures()
+
+        self.assertEqual(set(RUNTIMES), {"go", "java", "nodejs", "python", "dotnet"})
+        for runtime in RUNTIMES:
+            self.assertIn(f"name: beyla-runtime-{runtime}", rendered)
+            self.assertIn(f"kubex.ai/runtime: {runtime}", rendered)
+        self.assertEqual(rendered.count("stack-validation-real: \"true\""), 5)
+        self.assertIn("kind: Service", rendered)
+        self.assertIn("kind: ConfigMap", rendered)
+
+    def test_latest_chart_selection_uses_helm_order(self) -> None:
+        selected = select_latest([
+            {"name": "kubex/kubex-automation-stack", "version": "1.2.0"},
+            {"name": "kubex/kubex-automation-stack", "version": "1.1.0"},
+        ])
+        self.assertEqual(selected["version"], "1.2.0")
+
+    def test_validate_beyla_runtime_requires_all_runtime_labels(self) -> None:
+        responses = [
+            [{"metric": {"namespace": "kubex", "service": "kubex-beyla"}, "value": [0, "1"]}],
+            [
+                {"metric": {"k8s_namespace_name": "stack-validation-runtime", "telemetry_sdk_language": runtime, "k8s_deployment_name": f"beyla-runtime-{runtime}"}, "value": [0, "1"]}
+                for runtime in ("go", "java", "nodejs", "python", "dotnet")
+            ],
+        ]
+        with patch("scripts.validate_beyla_runtime.query", side_effect=responses):
+            result = validate("http://prometheus", "stack-validation-runtime")
+
+        self.assertEqual(result["missing"], [])
+        self.assertEqual(result["healthy_beyla_targets"], 1)
+
+    def test_validate_prometheus_metrics_records_counts_and_discrepancies(self) -> None:
+        responses = {
+            "metric_a": [{"metric": {"job": "a"}, "value": [0, "1"]}],
+            "metric_b": [],
+        }
+        with patch("scripts.validate_prometheus_metrics.query", side_effect=lambda _, expression: responses[expression]):
+            result = validate_prometheus("http://prometheus", ["metric_a", "metric_b"])
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["metrics"]["metric_a"]["series_count"], 1)
+        self.assertEqual(result["missing"], ["metric_b"])
+
+    def test_cluster_metric_consistency_matches_kubernetes_identity_sets(self) -> None:
+        kubernetes = {
+            "items": [
+                {"metadata": {"name": "node-a", "labels": {"stack-validation-real": "true"}}},
+                {"metadata": {"name": "node-b", "labels": {"stack-validation-real": "false"}}},
+            ]
+        }
+        with patch(
+            "scripts.validate_cluster_metric_consistency.kubectl_json",
+            side_effect=[kubernetes, {"items": [{"metadata": {"namespace": "ns", "name": "pod-a"}}]}],
+        ), patch(
+            "scripts.validate_cluster_metric_consistency.query",
+            side_effect=[
+                [
+                    {"metric": {"node": "node-a"}, "value": [0, "1"]},
+                    {"metric": {"node": "node-b"}, "value": [0, "1"]},
+                ],
+                [
+                    {"metric": {"node": "node-a", "label_stack_validation_real": "true"}, "value": [0, "1"]},
+                    {"metric": {"node": "node-b", "label_stack_validation_real": "false"}, "value": [0, "1"]},
+                ],
+                [{"metric": {"namespace": "ns", "pod": "pod-a"}, "value": [0, "1"]}],
+            ],
+        ):
+            result = validate_cluster_metrics("http://prometheus")
+        self.assertTrue(result["valid"])
+        self.assertEqual(result["checks"]["nodes"]["kubernetes_count"], 2)
+        self.assertEqual(result["checks"]["pods"]["prometheus_count"], 1)
+
+    def test_cluster_metric_consistency_detects_node_label_mismatch(self) -> None:
+        with patch(
+            "scripts.validate_cluster_metric_consistency.kubectl_json",
+            side_effect=[
+                {"items": [{"metadata": {"name": "node-a", "labels": {"stack-validation-real": "true"}}}]},
+                {"items": []},
+            ],
+        ), patch(
+            "scripts.validate_cluster_metric_consistency.query",
+            side_effect=[
+                [{"metric": {"node": "node-a"}, "value": [0, "1"]}],
+                [{"metric": {"node": "node-a", "label_stack_validation_real": "false"}, "value": [0, "1"]}],
+                [],
+            ],
+        ):
+            result = validate_cluster_metrics("http://prometheus")
+        self.assertFalse(result["checks"]["node_labels"]["valid"])
+        self.assertIn("node-a", result["checks"]["node_labels"]["mismatches"])
+
+    def test_validate_beyla_runtime_rejects_duplicate_unexpected_and_inactive_series(self) -> None:
+        responses = [
+            [{"metric": {"namespace": "kubex", "service": "kubex-beyla"}, "value": [0, "1"]}],
+            [
+                {"metric": {"telemetry_sdk_language": "go", "k8s_deployment_name": "beyla-runtime-go"}, "value": [0, "1"]},
+                {"metric": {"telemetry_sdk_language": "go", "k8s_deployment_name": "beyla-runtime-go", "instance": "duplicate"}, "value": [0, "1"]},
+                {"metric": {"telemetry_sdk_language": "rust", "k8s_deployment_name": "other"}, "value": [0, "1"]},
+                {"metric": {"telemetry_sdk_language": "java", "k8s_deployment_name": "beyla-runtime-java"}, "value": [0, "0"]},
+            ],
+        ]
+        with patch("scripts.validate_beyla_runtime.query", side_effect=responses):
+            result = validate("http://prometheus", "stack-validation-runtime", expected_fixtures=[
+                {"runtime": "go", "deployment": "beyla-runtime-go"},
+                {"runtime": "java", "deployment": "beyla-runtime-java"},
+            ])
+
+        self.assertEqual(result["duplicates"], {"go": 1})
+        self.assertEqual(len(result["unexpected"]), 1)
+        self.assertEqual(len(result["inactive"]), 1)
     def test_stack_workloads_are_mixed_resource_bearing_and_kwok_scheduled(self) -> None:
         rendered = build()
 
@@ -44,6 +159,44 @@ class StackValidationHelpersTest(unittest.TestCase):
             self.assertIn("**Captured uploads:** 2", result)
             self.assertIn("| `cluster/config.csv` | 2 |", result)
             self.assertIn("| `container/config.csv` | missing |", result)
+
+    def test_collection_results_reports_csv_schema_and_beyla_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            csv_dir = root / "captured"
+            path = csv_dir / "cluster" / "config.csv"
+            path.parent.mkdir(parents=True)
+            path.write_text("name,value\ncluster-a,1\n\n", encoding="utf-8")
+            detection = root / "beyla.json"
+            detection.write_text(json.dumps({"healthy_beyla_targets": 1, "detected": {"go": [{}, {}], "java": [{}]}}), encoding="utf-8")
+
+            result = collection_results(root / "state.json", csv_dir, "success", beyla_detection_path=detection)
+
+            self.assertEqual(result["beyla_runtimes"]["go"], 2)
+            self.assertEqual(result["beyla_runtimes"]["java"], 1)
+            self.assertEqual(result["beyla_runtimes"]["python"], 0)
+            self.assertEqual(result["beyla_total_series"], 3)
+            self.assertEqual(result["csv_files"]["cluster/config.csv"], {"exists": True, "columns": 2, "column_names": ["name", "value"], "data_rows": 1, "has_data": True})
+            self.assertFalse(result["csv_files"]["node/config.csv"]["has_data"])
+
+    def test_collection_results_detects_duplicate_and_mismatched_entities(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            csv_dir = root / "captured"
+            for name, content in {
+                "cluster/config.csv": "Name\ncluster-a\ncluster-a\n",
+                "cluster/attributes.csv": "Name\ncluster-a\ncluster-b\n",
+            }.items():
+                path = csv_dir / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+
+            result = collection_results(root / "state.json", csv_dir, "success")
+
+            self.assertFalse(result["integrity"]["valid"])
+            self.assertEqual(result["integrity"]["duplicate_rows"]["cluster/config.csv"], 1)
+            self.assertEqual(result["integrity"]["discrepancies"][0]["config_only"], 0)
+            self.assertEqual(result["integrity"]["discrepancies"][0]["attributes_only"], 1)
 
     def test_load_state_retries_disconnected_port_forward(self) -> None:
         response = MagicMock()
