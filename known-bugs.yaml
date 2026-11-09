@@ -1,0 +1,247 @@
+# Known collector bugs awaiting confirmation. Only used with pytest --known-bugs; see docs/extending.md.
+- test: scenarios/cadvisor/test_cadvisor.py::test_usage_matches_the_fixture[container/sum_cpu_throttling_seconds_workload]
+  bugs: [B-32]
+  match: sum_cpu_throttling_seconds_workload.csv
+- test: scenarios/container-resources/test_container_resources.py::test_churn_request_series_cover_the_grid
+  bugs: [B-09]
+  match: 'container/ephemeral_storage_request.csv: MetricTime grid (4 steps) differs for 1 of 1 identities'
+- test: scenarios/container-resources/test_container_resources.py::test_current_size_attribute[batch]
+  bugs: [B-08]
+  match: actual '', expected '2'
+- test: scenarios/container-resources/test_container_resources.py::test_current_size_attribute[done]
+  bugs: [B-08]
+  match: actual '', expected '0'
+- test: scenarios/container-resources/test_container_resources.py::test_current_size_series_follow_the_grid
+  bugs: [B-08]
+  match: 'container/current_size.csv: identities differ (1 missing, 0 unexpected; key ClusterName/Namespace/EntityName/EntityType/ContainerName) — missing    container-resources/cr-workload/batch/Job/work'
+- test: scenarios/container-resources/test_container_resources.py::test_namespace_quota_columns[NamespaceCpuLimit]
+  bugs: [B-05]
+  match: actual '8007', expected '8008'
+- test: scenarios/container-resources/test_container_resources.py::test_power_state_of_owners_with_finished_pods[mixed]
+  bugs: [B-10]
+  match: '[(''Job'', ''mixed'', ''Terminated'')], expected [(''Job'', ''mixed'', ''Running'')]'
+- test: scenarios/container-resources/test_container_resources.py::test_quota_attributes[NamespaceCpuLimit]
+  bugs: [B-05]
+  match: actual '8007', expected '8008'
+- test: scenarios/container-resources/test_container_resources.py::test_quota_series_match_status_used[rq/cpu_requests.csv]
+  bugs: [B-16]
+  match: actual 5002.0, expected 2501.0
+- test: scenarios/container-resources/test_container_resources.py::test_request_and_limit_attributes[db-db-CpuLimit]
+  bugs: [B-05]
+  match: actual '1000', expected '1001'
+- test: scenarios/container-resources/test_container_resources.py::test_request_and_limit_attributes[db-db-CpuRequest]
+  bugs: [B-05]
+  match: actual '1000', expected '1001'
+- test: scenarios/container-resources/test_container_resources.py::test_terminal_pods_are_excluded_from_attributes[cluster/attributes.csv-CpuLimit]
+  bugs: [B-04]
+  match: actual 4500, expected 4501
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_container_dcgm_workloads_match_the_fixture[container/gpu_mem_used_avg_workload.csv]
+  bugs: [B-33]
+  match: actual 12000.0, expected 24000
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_container_dcgm_workloads_match_the_fixture[container/gpu_mem_used_max_workload.csv]
+  bugs: [B-33]
+  match: actual 14000.0, expected 24000
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_container_dcgm_workloads_match_the_fixture[container/gpu_mem_utilization_max_workload.csv]
+  bugs: [B-33]
+  match: actual 34.717056, expected 29.757476565987204
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_container_dcgm_workloads_match_the_fixture[container/gpu_power_usage_avg_workload.csv]
+  bugs: [B-33]
+  match: actual 150.0, expected 300
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_container_dcgm_workloads_match_the_fixture[container/gpu_power_usage_max_workload.csv]
+  bugs: [B-33]
+  match: actual 180.0, expected 300
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_container_dcgm_workloads_match_the_fixture[container/gpu_utilization_gpus_avg_workload.csv]
+  bugs: [B-02]
+  match: archive has no file 'container/gpu_utilization_gpus_avg_workload.csv'
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_container_dcgm_workloads_match_the_fixture[container/gpu_utilization_gpus_max_workload.csv]
+  bugs: [B-02]
+  match: archive has no file 'container/gpu_utilization_gpus_max_workload.csv'
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_container_dcgm_workloads_match_the_fixture[container/gpu_utilization_max_workload.csv]
+  bugs: [B-33]
+  match: actual 50.0, expected 40
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_expected_files
+  bugs: [B-01, B-02]
+  match: missing ['container/gpu_utilization_gpus_avg_workload.csv', 'container/gpu_utilization_gpus_max_workload.csv', 'node_group/gpu_utilization_gpus_avg.csv']
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_group_dcgm_series[node_group/gpu_utilization_gpus_avg.csv]
+  bugs: [B-01]
+  match: archive has no file 'node_group/gpu_utilization_gpus_avg.csv'
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_node_dcgm_series[node/gpu_utilization_gpus_avg.csv]
+  bugs: [B-38]
+  match: actual 2.0, expected 0.5
+- test: scenarios/gpu-device-plugin/test_gpu_device_plugin.py::test_node_gpu_attributes[worker2]
+  bugs: [B-15]
+  match: '''GpuReplicas'': actual ''0'', expected ''1'''
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_container_gpu_attributes[trainer-train]
+  bugs: [B-35]
+  match: '''GpuSharingStrategy'': actual '''', expected ''time-slicing'''
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_container_gpu_memory_total[infer-serve]
+  bugs: [B-36]
+  match: actual '40748', expected '40960'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_dcgm_group_series_keep_the_scrape_node[gpu_mem_used]
+  bugs: [B-25]
+  match: archive has no file 'node_group/gpu_mem_used_avg.csv'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_dcgm_group_series_keep_the_scrape_node[gpu_mem_utilization]
+  bugs: [B-25]
+  match: archive has no file 'node_group/gpu_mem_utilization_avg.csv'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_dcgm_group_series_keep_the_scrape_node[gpu_power_usage]
+  bugs: [B-25]
+  match: archive has no file 'node_group/gpu_power_usage_avg.csv'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_dcgm_group_series_keep_the_scrape_node[gpu_utilization]
+  bugs: [B-25]
+  match: archive has no file 'node_group/gpu_utilization_avg.csv'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_dcgm_node_series_keep_the_scrape_node[gpu_mem_used]
+  bugs: [B-25]
+  match: archive has no file 'node/gpu_mem_used_avg.csv'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_dcgm_node_series_keep_the_scrape_node[gpu_mem_utilization]
+  bugs: [B-25]
+  match: archive has no file 'node/gpu_mem_utilization_avg.csv'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_dcgm_node_series_keep_the_scrape_node[gpu_power_usage]
+  bugs: [B-25]
+  match: archive has no file 'node/gpu_power_usage_avg.csv'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_dcgm_node_series_keep_the_scrape_node[gpu_utilization]
+  bugs: [B-25]
+  match: archive has no file 'node/gpu_utilization_avg.csv'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_expected_files
+  bugs: [B-25]
+  match: missing ['node/gpu_mem_used_avg.csv', 'node/gpu_mem_utilization_avg.csv', 'node/gpu_power_usage_avg.csv', 'node/gpu_utilization_avg.csv', 'node_group/gpu_mem_used_avg.csv'
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_kubex_workloads_match_the_fixture[container/gpu_mem_used_avg_workload.csv]
+  bugs: [B-34]
+  match: actual 10240.0, expected 20480
+- test: scenarios/gpu-telemetry-fixtures/test_gpu_telemetry_fixtures.py::test_kubex_workloads_match_the_fixture[container/gpu_mem_used_max_workload.csv]
+  bugs: [B-34]
+  match: actual 12288.0, expected 20480
+- test: scenarios/hpa-orphans/test_hpa_orphans.py::test_expected_files
+  bugs: [B-30]
+  match: missing ['hpa/hpa_extra_attributes.csv']
+- test: scenarios/hpa-orphans/test_hpa_orphans.py::test_hpa_series_cover_every_history_interval
+  bugs: [B-13]
+  match: MetricTime counts differ in 24 identities
+- test: scenarios/hpa-orphans/test_hpa_orphans.py::test_orphan_attributes_describe_their_targets
+  bugs: [B-30]
+  match: archive has no file 'hpa/hpa_extra_attributes.csv'
+- test: scenarios/ksm-replicas/test_ksm_replicas.py::test_container_cpu_request_attribute[done-work]
+  bugs: [B-26]
+  match: actual ['250'], expected ['']
+- test: scenarios/ksm-replicas/test_ksm_replicas.py::test_container_cpu_request_attribute[web-app]
+  bugs: [B-26]
+  match: actual ['500'], expected ['250']
+- test: scenarios/ksm-replicas/test_ksm_replicas.py::test_container_cpu_request_series
+  bugs: [B-26]
+  match: 'container/cpu_request.csv: identities differ (0 missing, 1 unexpected; key ClusterName/Namespace/EntityName/EntityType/ContainerName) — unexpected ksm-replicas/ksmr-workload/done/Job/work'
+- test: scenarios/ksm-replicas/test_ksm_replicas.py::test_power_state[done-work]
+  bugs: [B-26]
+  match: actual ['Running'], expected ['Terminated']
+- test: scenarios/ksm-replicas/test_ksm_replicas.py::test_quota_cpu_requests_series
+  bugs: [B-26]
+  match: actual 500.0, expected 250.0
+- test: scenarios/ksm-replicas/test_ksm_replicas.py::test_worker_cpu_series[node/cpu_reservation_percent.csv]
+  bugs: [B-26]
+  match: actual 4.375, expected 8.75
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[cluster/net_received_bytes]
+  bugs: [E-4]
+  match: expected 7000000 ± 7.0e+04
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[cluster/net_received_packets]
+  bugs: [E-4]
+  match: expected 7000 ± 70
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[cluster/net_sent_bytes]
+  bugs: [E-4]
+  match: expected 3500000 ± 3.5e+04
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[cluster/net_sent_packets]
+  bugs: [E-4]
+  match: expected 3500 ± 35
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[cluster/net_total_bytes]
+  bugs: [E-4]
+  match: expected 10500000 ± 1.0e+05
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[cluster/net_total_packets]
+  bugs: [E-4]
+  match: expected 10500 ± 105
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node/cpu_throttling_events]
+  bugs: [B-32]
+  match: actual 12.0, expected 9 ± 0.0e+00
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node/net_received_bytes]
+  bugs: [E-4]
+  match: expected 1000000 ± 1.0e+04
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node/net_received_packets]
+  bugs: [E-4]
+  match: expected 1000 ± 10
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node/net_sent_bytes]
+  bugs: [E-4]
+  match: expected 500000 ± 5.0e+03
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node/net_sent_packets]
+  bugs: [E-4]
+  match: expected 500 ± 5
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node/net_total_bytes]
+  bugs: [E-4]
+  match: expected 1500000 ± 1.5e+04
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node/net_total_packets]
+  bugs: [E-4]
+  match: expected 1500 ± 15
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node/oom_kill_events]
+  bugs: [B-32]
+  match: actual 4.0, expected 3 ± 0.0e+00
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node_group/net_received_bytes]
+  bugs: [E-4]
+  match: expected 6000000 ± 6.0e+04
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node_group/net_received_packets]
+  bugs: [E-4]
+  match: expected 6000 ± 60
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node_group/net_sent_bytes]
+  bugs: [E-4]
+  match: expected 3000000 ± 3.0e+04
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node_group/net_sent_packets]
+  bugs: [E-4]
+  match: expected 3000 ± 30
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node_group/net_total_bytes]
+  bugs: [E-4]
+  match: expected 9000000 ± 9.0e+04
+- test: scenarios/node-exporter/test_node_exporter.py::test_values_match_the_fixture[node_group/net_total_packets]
+  bugs: [E-4]
+  match: expected 9000 ± 90
+- test: scenarios/node-pressure/test_node_pressure.py::test_node_attribute_capacity_and_allocatable[kubex-e2e-node-pressure-worker2]
+  bugs: [E-2]
+  match: actual Decimal('3'), expected Decimal('3.500')
+- test: scenarios/node-pressure/test_node_pressure.py::test_node_attribute_capacity_and_allocatable[kubex-e2e-node-pressure-worker]
+  bugs: [E-2]
+  match: actual Decimal('3'), expected Decimal('3.500')
+- test: scenarios/node-pressure/test_node_pressure.py::test_node_attribute_requests_and_limits[kubex-e2e-node-pressure-worker3-CpuRequest]
+  bugs: [E-1]
+  match: actual 799, expected 800
+- test: scenarios/nodegroup-labels/test_nodegroup_labels.py::test_expected_files
+  bugs: [B-11, B-12]
+  match: missing ['node/cpu_utilization.csv', 'node/memory_actual_utilization.csv', 'node/memory_utilization.csv', 'node/memory_ws.csv', 'node/memory_ws_utilization.csv', 'node_group/cpu_utilization.csv']
+- test: scenarios/nodegroup-labels/test_nodegroup_labels.py::test_pod_ip_exporter_series[node/cpu_utilization]
+  bugs: [B-11]
+  match: archive has no file 'node/cpu_utilization.csv'
+- test: scenarios/nodegroup-labels/test_nodegroup_labels.py::test_pod_ip_exporter_series[node/memory_actual_utilization]
+  bugs: [B-12]
+  match: archive has no file 'node/memory_actual_utilization.csv'
+- test: scenarios/nodegroup-labels/test_nodegroup_labels.py::test_pod_ip_exporter_series[node/memory_utilization]
+  bugs: [B-12]
+  match: archive has no file 'node/memory_utilization.csv'
+- test: scenarios/nodegroup-labels/test_nodegroup_labels.py::test_pod_ip_exporter_series[node_group/cpu_utilization]
+  bugs: [B-11]
+  match: archive has no file 'node_group/cpu_utilization.csv'
+- test: scenarios/nodegroup-labels/test_nodegroup_labels.py::test_working_set_series_follow_the_collector_grid[node/memory_ws.csv]
+  bugs: [B-12]
+  match: archive has no file 'node/memory_ws.csv'
+- test: scenarios/nodegroup-labels/test_nodegroup_labels.py::test_working_set_series_follow_the_collector_grid[node/memory_ws_utilization.csv]
+  bugs: [B-12]
+  match: archive has no file 'node/memory_ws_utilization.csv'
+- test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_attribute_labels[control-plane]
+  bugs: [E-3]
+  match: shared labels missing or wrong (0 collected)
+- test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_attribute_labels[gpu]
+  bugs: [E-3]
+  match: shared labels missing or wrong (0 collected)
+- test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_attribute_labels[infra]
+  bugs: [E-3]
+  match: shared labels missing or wrong (0 collected)
+- test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_config_os_and_model[control-plane]
+  bugs: [E-3]
+  match: assert actual ('', ''), expected ('linux', 'e2e.control-plane')
+- test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_config_os_and_model[gpu]
+  bugs: [E-3]
+  match: assert actual ('', ''), expected ('linux', 'e2e.gpu')
+- test: scenarios/nodegroup-roles/test_nodegroup_roles.py::test_config_os_and_model[infra]
+  bugs: [E-3]
+  match: assert actual ('', ''), expected ('linux', 'e2e.infra')

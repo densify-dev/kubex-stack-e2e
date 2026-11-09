@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: Namespace
+metadata: {name: gdp-workload}
+---
+# Two GPUs in one container; the DCGM fixture binds GPUs 0 and 1 to trainer-0/train.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: trainer, namespace: gdp-workload}
+spec:
+  serviceName: trainer
+  replicas: 1
+  selector: {matchLabels: {app: trainer}}
+  template:
+    metadata: {labels: {app: trainer}}
+    spec:
+      nodeSelector: {kubernetes.io/hostname: kubex-e2e-gpu-device-plugin-worker}
+      containers:
+        - name: train
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests: {cpu: 50m, memory: 32Mi, nvidia.com/gpu: "2"}
+            limits: {cpu: 100m, memory: 64Mi, nvidia.com/gpu: "2"}
+---
+# Two replicas of one GPU each, so the DCGM fixture can give them different values (infer-0 on GPU 2, infer-1 on GPU 3).
+apiVersion: apps/v1
+kind: StatefulSet
+metadata: {name: infer, namespace: gdp-workload}
+spec:
+  serviceName: infer
+  replicas: 2
+  podManagementPolicy: Parallel
+  selector: {matchLabels: {app: infer}}
+  template:
+    metadata: {labels: {app: infer}}
+    spec:
+      nodeSelector: {kubernetes.io/hostname: kubex-e2e-gpu-device-plugin-worker}
+      containers:
+        - name: serve
+          image: registry.k8s.io/pause:3.9
+          imagePullPolicy: IfNotPresent
+          resources:
+            requests: {cpu: 50m, memory: 32Mi, nvidia.com/gpu: "1"}
+            limits: {cpu: 100m, memory: 64Mi, nvidia.com/gpu: "1"}
